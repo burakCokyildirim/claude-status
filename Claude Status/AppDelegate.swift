@@ -112,7 +112,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let petController {
             petController.settingsDidChange()
         } else {
-            let controller = PetWindowController(settings: petSettings)
+            let controller = PetWindowController(
+                settings: petSettings,
+                onFocus: { [weak self] session in
+                    self?.focuser.focus(session: session)
+                },
+                onShowSessionList: { [weak self] in
+                    self?.togglePopover()
+                },
+                onShowSettings: { [weak self] in
+                    self?.showSettings()
+                },
+                onHide: { [weak self] in
+                    self?.petSettings.isEnabled = false
+                }
+            )
             controller.show()
             petController = controller
         }

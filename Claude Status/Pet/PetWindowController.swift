@@ -8,9 +8,16 @@ import SwiftUI
 /// panel is destroyed rather than hidden, so a disabled pet holds no window, no
 /// observers, and no timers.
 @MainActor
-final class PetWindowController {
+final class PetWindowController: NSObject {
 
     private let settings: PetSettings
+
+    /// Injected the way `AppDelegate` already wires the popover, so the
+    /// controller needs no reference back to the app delegate.
+    private let onFocus: (ClaudeSession) -> Void
+    private let onShowSessionList: () -> Void
+    private let onShowSettings: () -> Void
+    private let onHide: () -> Void
 
     private var panel: PetPanel?
     private var contentView: PetContentView?
@@ -40,8 +47,22 @@ final class PetWindowController {
     private var workspaceObservers: [NSObjectProtocol] = []
     private var defaultObservers: [NSObjectProtocol] = []
 
-    init(settings: PetSettings) {
+    private var isHovered = false
+    private var isDragging = false
+
+    init(
+        settings: PetSettings,
+        onFocus: @escaping (ClaudeSession) -> Void,
+        onShowSessionList: @escaping () -> Void,
+        onShowSettings: @escaping () -> Void,
+        onHide: @escaping () -> Void
+    ) {
         self.settings = settings
+        self.onFocus = onFocus
+        self.onShowSessionList = onShowSessionList
+        self.onShowSettings = onShowSettings
+        self.onHide = onHide
+        super.init()
     }
 
     // MARK: - Lifecycle
@@ -54,6 +75,7 @@ final class PetWindowController {
 
         let content = PetContentView(frame: frame)
         content.interactiveRect = PetLayout.spriteRect(scale: scale)
+        content.controller = self
 
         let hosting = NSHostingView(rootView: makeView())
         hosting.frame = frame
@@ -175,8 +197,12 @@ final class PetWindowController {
     }
 
     private var bubbleTitle: String? {
-        guard settings.bubbleMode == .always, let session else { return nil }
-        return session.sessionName ?? session.projectName
+        guard !isDragging, let session else { return nil }
+        switch settings.bubbleMode {
+        case .always: return session.sessionName ?? session.projectName
+        case .hover: return isHovered ? (session.sessionName ?? session.projectName) : nil
+        case .never: return nil
+        }
     }
 
     /// The transform for right now: a one-shot while it is running, otherwise the
@@ -264,7 +290,122 @@ final class PetWindowController {
         updateAnimationDriver()
     }
 
+    // MARK: - Interaction
+
+    /// A click that stayed put: react, then focus the session it stands for.
+    func petWasClicked() {
+        startOneShot(.poke)
+        guard let session else { return }
+        onFocus(session)
+    }
+
+    func hoverChanged(_ hovered: Bool) {
+        guard hovered != isHovered else { return }
+        isHovered = hovered
+        render()
+    }
+
+    func dragDidBegin() {
+        isDragging = true
+        render()
+    }
+
+    /// Persists where the pet was dropped. This is the only place a position is
+    /// written: re-clamping after a display change must never overwrite it.
+    func dragDidEnd() {
+        isDragging = false
+        defer { render() }
+
+        guard let rect = petScreenRect,
+              let screen = Self.screen(holding: rect, among: Self.currentScreens()) else { return }
+
+        let clamped = PetPlacement.clamp(rect.origin, in: screen.visibleFrame, petSize: rect.size)
+        movePet(to: clamped)
+        settings.savePosition(
+            PetPosition(petOrigin: clamped, petSize: rect.size, screen: screen)
+        )
+    }
+
+    // MARK: - Context Menu
+
+    func makeContextMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addItem(menuItem("Show Session List", #selector(showSessionList)))
+        menu.addItem(menuItem("Reset Position", #selector(resetPosition)))
+        menu.addItem(.separator())
+        menu.addItem(menuItem("Hide Pet", #selector(hidePet)))
+        menu.addItem(menuItem("Settings\u{2026}", #selector(showSettings)))
+        menu.addItem(.separator())
+        menu.addItem(menuItem("Quit Claude Status", #selector(quitApp)))
+        return menu
+    }
+
+    private func menuItem(_ title: String, _ action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        // The target has to be explicit. With a nil target AppKit walks the
+        // responder chain, which does not reach here from a non-key panel in an
+        // inactive app, and every item would come up disabled.
+        item.target = self
+        item.isEnabled = true
+        return item
+    }
+
+    @objc private func showSessionList() {
+        onShowSessionList()
+    }
+
+    @objc private func showSettings() {
+        onShowSettings()
+    }
+
+    @objc private func hidePet() {
+        onHide()
+    }
+
+    @objc private func quitApp() {
+        NSApplication.shared.terminate(nil)
+    }
+
+    /// Recovery for a pet that ended up somewhere unreachable. There is no Dock
+    /// icon and no window list, so without this there would be no way back.
+    @objc private func resetPosition() {
+        settings.clearPosition()
+        let petSize = PetLayout.petSize(scale: settings.size.scale)
+        let visible = NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
+        movePet(to: PetPlacement.defaultOrigin(in: visible, petSize: petSize))
+    }
+
     // MARK: - Placement
+
+    /// The sprite's on-screen rect — the part that actually responds to the mouse.
+    var interactiveScreenRect: NSRect? {
+        guard let panel else { return nil }
+        let scale = settings.size.scale
+        let sprite = PetLayout.spriteRect(scale: scale)
+        let panelHeight = PetLayout.panelSize(scale: scale).height
+        // `spriteRect` is in the flipped panel space; screen coordinates count up.
+        return NSRect(
+            x: panel.frame.minX + sprite.minX,
+            y: panel.frame.minY + (panelHeight - sprite.maxY),
+            width: sprite.width,
+            height: sprite.height
+        )
+    }
+
+    /// The display holding most of `rect`, so a drop across a boundary is
+    /// attributed to the screen the pet actually landed on.
+    private static func screen(holding rect: NSRect, among screens: [PetScreen]) -> PetScreen? {
+        let best = screens.max { lhs, rhs in
+            overlap(rect, lhs.visibleFrame) < overlap(rect, rhs.visibleFrame)
+        }
+        return best ?? screens.first
+    }
+
+    private static func overlap(_ lhs: NSRect, _ rhs: NSRect) -> CGFloat {
+        let intersection = lhs.intersection(rhs)
+        return intersection.isNull || intersection.isEmpty ? 0 : intersection.width * intersection.height
+    }
 
     /// The pet box's current on-screen rect, or `nil` when there is no panel.
     var petScreenRect: NSRect? {
