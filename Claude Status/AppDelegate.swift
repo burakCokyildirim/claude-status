@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let pluginInstaller = PluginInstaller()
     private var eventMonitor: Any?
     private var settingsWindow: NSWindow?
+    private let petSettings = PetSettings()
+    private var petController: PetWindowController?
 
     /// Sparkle updater controller for automatic updates.
     /// Only initialized when a valid EdDSA public key is present in Info.plist.
@@ -38,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupPopover()
         setupURLHandler()
         monitor.start()
+        setupPet()
 
         // Initialize Sparkle only if a valid EdDSA public key is configured
         if let edKey = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String,
@@ -81,8 +84,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         monitor.stop()
+        petController?.tearDown()
+        petController = nil
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
+        }
+    }
+
+    // MARK: - Desktop Pet
+
+    private func setupPet() {
+        petSettings.onChange = { [weak self] in
+            self?.syncPet()
+        }
+        syncPet()
+    }
+
+    /// Creates or destroys the pet panel to match the setting. The panel is torn
+    /// down rather than hidden, so a disabled pet holds no window and no timers.
+    private func syncPet() {
+        guard petSettings.isEnabled else {
+            petController?.tearDown()
+            petController = nil
+            return
+        }
+
+        if let petController {
+            petController.settingsDidChange()
+        } else {
+            let controller = PetWindowController(settings: petSettings)
+            controller.show()
+            petController = controller
         }
     }
 
@@ -484,6 +516,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.profileStore.refresh()
         let settingsView = SettingsView(
             profileStore: monitor.profileStore,
+            petSettings: petSettings,
             updater: updaterController?.updater,
             onInstallPlugin: { [weak self] profile in
                 self?.performPluginInstall(for: [profile])

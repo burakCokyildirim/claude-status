@@ -6,6 +6,7 @@ import SwiftUI
 /// Settings window with icon style, launch at login, and profile/plugin management.
 struct SettingsView: View {
     @Bindable var profileStore: ProfileStore
+    @Bindable var petSettings: PetSettings
     var updater: SPUUpdater?
     var onInstallPlugin: (ClaudeProfile) -> Void
     var onUninstallPlugin: (ClaudeProfile) -> Void
@@ -30,6 +31,16 @@ struct SettingsView: View {
                     .onChange(of: launchAtLogin) { _, newValue in
                         toggleLaunchAtLogin(newValue)
                     }
+            }
+
+            Section {
+                Toggle("Show Desktop Pet", isOn: $petSettings.isEnabled)
+            } header: {
+                Text("Desktop Pet")
+            } footer: {
+                Text("A small character that floats above your other windows and shows what the highest-priority session is doing. Click it to focus that session.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if let updater {
