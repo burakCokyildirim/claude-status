@@ -68,11 +68,23 @@ Claude Status/                         # Main app target
     ProductivityTracker.swift          # Time-in-state tracking, concurrency, score (persists to App Group)
     PluginDetector.swift               # Checks installed_plugins.json and settings.json for hook status
     PluginInstaller.swift              # Installs/uninstalls bundled plugin via `claude plugin` CLI
+  Pet/                                 # Optional always-on-top desktop pet (off by default)
+    PetPresenter.swift                 # Pure: [ClaudeSession] -> the one session the pet represents
+    PetSettings.swift                  # Settings value + enums, read from App Group defaults
+    PetPosition.swift                  # Codable position + pure screen resolution/clamp math
+    PetLayout.swift                    # Pure panel/sprite/bubble geometry over the sprite grid
+    PetCharacter.swift                 # 16x24 pixel-art poses, shared faces, three characters
+    PetMotion.swift                    # Pure: (animation, phase) -> PetTransform
+    PetPanel.swift                     # NSPanel: borderless, non-activating, .floating, all Spaces
+    PetContentView.swift               # NSView: hit test, tracking area, click/drag, context menu
+    PetWindowController.swift          # Lifecycle, placement, animation driver, teardown
   Views/                               # SwiftUI views
     SessionListView.swift              # Popover: header, session list, empty state, Settings/Quit
     SessionRowView.swift               # Session row: status icon, project, source, activity, time
-    SettingsView.swift                 # Icon style picker, launch at login, plugin management
+    SettingsView.swift                 # Icon style, launch at login, plugin management, desktop pet
     ProductivityBarView.swift          # Visual productivity tracking bar
+    PetView.swift                      # SwiftUI Canvas: sprite render, count badge
+    PetBubbleView.swift                # Pet speech bubble
 
 Shared/                                # Models shared between app and widget
   ClaudeSession.swift                  # ClaudeSession model, SessionState enum, SessionSource enum
@@ -135,6 +147,10 @@ State is reported by the hook script in `.cstatus` files:
 **Terminals** (via process tree): iTerm2 (session-specific AppleScript focusing), Terminal, Warp, Alacritty, Kitty, WezTerm, Ghostty
 
 **IDEs** (via process tree): Xcode, VS Code, JetBrains IDEs, Zed
+
+### Desktop Pet
+
+An optional floating character, off by default. `PetWindowController` owns a borderless, non-activating `NSPanel` at `.floating` that joins all Spaces; SwiftUI draws into it while `PetContentView` owns every event (`hitTest` never calls `super`, so only the sprite is clickable and the transparent margin clicks through). `PetPresenter` picks the single session it stands for, reusing `SessionState.sortOrder`. Characters are 16x24 pixel-art string grids in `PetCharacter`; all motion comes from `PetMotion`, a pure function from animation and phase to a transform. Settings live in the App Group defaults under `pet*` keys and are re-read on the status item's existing one-second tick — the pet starts no timer of its own, and runs no frame timer when idle, hidden, or under reduced motion.
 
 ### Productivity Tracking
 
