@@ -54,8 +54,6 @@ struct PetView: View {
             let spriteWidth = CGFloat(PetLayout.gridWidth) * pixel
             let spriteHeight = CGFloat(PetLayout.gridHeight) * pixel
 
-            var context = context
-
             // Anchor squash and stretch at the feet: a body compresses into the
             // ground, it does not shrink around its middle.
             let anchor = CGPoint(x: size.width / 2, y: margin + spriteHeight)

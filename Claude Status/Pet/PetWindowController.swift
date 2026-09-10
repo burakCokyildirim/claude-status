@@ -10,7 +10,8 @@ import SwiftUI
 @MainActor
 final class PetWindowController: NSObject {
 
-    private let settings: PetSettings
+    /// A value snapshot, replaced wholesale by `update(settings:)`.
+    private var settings: PetSettings
 
     /// Injected the way `AppDelegate` already wires the popover, so the
     /// controller needs no reference back to the app delegate.
@@ -49,6 +50,12 @@ final class PetWindowController: NSObject {
 
     private var isHovered = false
     private var isDragging = false
+    /// The scale the current panel was laid out for, so a settings change knows
+    /// whether the geometry actually needs rebuilding.
+    private var builtScale: CGFloat = 0
+    /// Bumped on every screen-parameter notification so superseded and
+    /// post-teardown re-clamps drop out.
+    private var screenChangeGeneration = 0
 
     init(
         settings: PetSettings,
@@ -71,6 +78,7 @@ final class PetWindowController: NSObject {
         guard panel == nil else { return }
 
         let scale = settings.size.scale
+        builtScale = scale
         let frame = NSRect(origin: .zero, size: PetLayout.panelSize(scale: scale))
 
         let content = PetContentView(frame: frame)
@@ -104,6 +112,8 @@ final class PetWindowController: NSObject {
         frameTimer?.invalidate()
         frameTimer = nil
         oneShot = nil
+        // Drops any re-clamp still waiting out its debounce.
+        screenChangeGeneration += 1
 
         for observer in workspaceObservers {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
@@ -122,13 +132,24 @@ final class PetWindowController: NSObject {
         hostingView = nil
     }
 
-    /// Rebuilds the panel when a setting that changes its geometry is edited.
-    func settingsDidChange() {
+    /// Applies a fresh settings snapshot, rebuilding only if the geometry moved.
+    func update(settings: PetSettings) {
+        self.settings = settings
         guard panel != nil else { return }
-        // The session binding lives on the controller, so a rebuild keeps it.
-        tearDown()
-        show()
+
+        // Only the size changes the panel's geometry. Rebuilding for a bubble or
+        // character change would drop hover state and flicker for nothing.
+        if builtScale != settings.size.scale {
+            // The session binding lives on the controller, so a rebuild keeps it.
+            tearDown()
+            show()
+            updateVisibility()
+            return
+        }
+
         updateVisibility()
+        render()
+        updateAnimationDriver()
     }
 
     // MARK: - Session Binding
@@ -279,6 +300,48 @@ final class PetWindowController: NSObject {
         ) { [weak self] _ in
             DispatchQueue.main.async { self?.updateAnimationDriver() }
         })
+
+        defaultObservers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            DispatchQueue.main.async { self?.screenParametersDidChange() }
+        })
+    }
+
+    /// Displays changed: a monitor was plugged or unplugged, a resolution or
+    /// arrangement changed, or the Dock or menu bar changed the working area.
+    private func screenParametersDidChange() {
+        // These arrive in a burst while the configuration settles, and the early
+        // ones describe an arrangement that is not final.
+        screenChangeGeneration += 1
+        let generation = screenChangeGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self, self.screenChangeGeneration == generation else { return }
+            self.reclampIntoVisibleArea()
+        }
+    }
+
+    /// Brings the pet back into a visible working area.
+    ///
+    /// Deliberately does not save: if a re-clamp overwrote the stored position,
+    /// unplugging an external display would permanently destroy where the user
+    /// had put the pet on it. Leaving it alone means replugging restores it.
+    private func reclampIntoVisibleArea() {
+        guard panel != nil, let rect = petScreenRect else { return }
+        let screens = Self.currentScreens()
+
+        if let stored = PetSettings.savedPosition(),
+           let screen = PetPlacement.resolveScreen(for: stored, among: screens) {
+            movePet(to: PetPlacement.origin(for: stored, in: screen.visibleFrame, petSize: rect.size))
+            return
+        }
+
+        let visible = Self.screen(holding: rect, among: screens)?.visibleFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? .zero
+        movePet(to: PetPlacement.clamp(rect.origin, in: visible, petSize: rect.size))
     }
 
     private func reduceMotionDidChange() {
@@ -321,7 +384,7 @@ final class PetWindowController: NSObject {
 
         let clamped = PetPlacement.clamp(rect.origin, in: screen.visibleFrame, petSize: rect.size)
         movePet(to: clamped)
-        settings.savePosition(
+        PetSettings.savePosition(
             PetPosition(petOrigin: clamped, petSize: rect.size, screen: screen)
         )
     }
@@ -351,16 +414,19 @@ final class PetWindowController: NSObject {
         return item
     }
 
+    // These run to the next turn of the run loop rather than inside the menu's
+    // own tracking loop: showing a window from there is unreliable, and "Hide
+    // Pet" destroys the very view that is still tracking the menu.
     @objc private func showSessionList() {
-        onShowSessionList()
+        DispatchQueue.main.async { [weak self] in self?.onShowSessionList() }
     }
 
     @objc private func showSettings() {
-        onShowSettings()
+        DispatchQueue.main.async { [weak self] in self?.onShowSettings() }
     }
 
     @objc private func hidePet() {
-        onHide()
+        DispatchQueue.main.async { [weak self] in self?.onHide() }
     }
 
     @objc private func quitApp() {
@@ -370,7 +436,7 @@ final class PetWindowController: NSObject {
     /// Recovery for a pet that ended up somewhere unreachable. There is no Dock
     /// icon and no window list, so without this there would be no way back.
     @objc private func resetPosition() {
-        settings.clearPosition()
+        PetSettings.clearPosition()
         let petSize = PetLayout.petSize(scale: settings.size.scale)
         let visible = NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
         movePet(to: PetPlacement.defaultOrigin(in: visible, petSize: petSize))
@@ -428,7 +494,7 @@ final class PetWindowController: NSObject {
         let petSize = PetLayout.petSize(scale: scale)
         let screens = Self.currentScreens()
 
-        guard let stored = settings.savedPosition else {
+        guard let stored = PetSettings.savedPosition() else {
             let visible = NSScreen.main?.visibleFrame ?? screens.first?.visibleFrame ?? .zero
             movePet(to: PetPlacement.defaultOrigin(in: visible, petSize: petSize))
             return

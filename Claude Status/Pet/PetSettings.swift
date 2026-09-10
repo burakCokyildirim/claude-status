@@ -76,38 +76,22 @@ enum PetCharacterID: String, CaseIterable {
     }
 }
 
-/// User settings for the desktop pet, persisted in the App Group defaults.
+/// A snapshot of the desktop pet's settings, read from the App Group defaults.
 ///
-/// Mirrors `ProfileStore`: `@Observable` for the settings UI, plus an `onChange`
-/// callback for `AppDelegate`, which is not a view and cannot observe bindings.
-/// The stored position is deliberately excluded from `onChange` — saving where
-/// the user dropped the pet must not trigger a reconfiguration.
-@Observable
-@MainActor
-final class PetSettings {
+/// A value rather than an observable object, matching how `iconStyle` already
+/// works in this app: `SettingsView` writes through `@AppStorage`, and
+/// `AppDelegate` re-reads on the status item's existing one-second tick and
+/// reconfigures when something actually changed. That keeps the pet off any
+/// notification or observation machinery of its own.
+nonisolated struct PetSettings: Equatable {
 
-    /// Invoked after any user-facing setting changes.
-    var onChange: (() -> Void)?
+    var isEnabled: Bool
+    var size: PetSize
+    var bubbleMode: PetBubbleMode
+    var emptyBehavior: PetEmptyBehavior
+    var character: PetCharacterID
 
-    var isEnabled: Bool {
-        didSet { commit(isEnabled, oldValue, key: Keys.enabled, encode: { $0 }) }
-    }
-    var size: PetSize {
-        didSet { commit(size, oldValue, key: Keys.size, encode: { $0.rawValue }) }
-    }
-    var bubbleMode: PetBubbleMode {
-        didSet { commit(bubbleMode, oldValue, key: Keys.bubbleMode, encode: { $0.rawValue }) }
-    }
-    var emptyBehavior: PetEmptyBehavior {
-        didSet { commit(emptyBehavior, oldValue, key: Keys.emptyBehavior, encode: { $0.rawValue }) }
-    }
-    var character: PetCharacterID {
-        didSet { commit(character, oldValue, key: Keys.character, encode: { $0.rawValue }) }
-    }
-
-    private let defaults: UserDefaults?
-
-    private enum Keys {
+    enum Keys {
         static let enabled = "petEnabled"
         static let size = "petSize"
         static let bubbleMode = "petBubbleMode"
@@ -116,49 +100,48 @@ final class PetSettings {
         static let position = "petPosition"
     }
 
-    init(defaults: UserDefaults? = AppGroup.defaults) {
-        self.defaults = defaults
-        // The pet is a new, always-visible piece of UI, so it stays opt-in.
-        isEnabled = defaults?.bool(forKey: Keys.enabled) ?? false
-        size = Self.value(defaults?.string(forKey: Keys.size), default: .medium)
-        bubbleMode = Self.value(defaults?.string(forKey: Keys.bubbleMode), default: .hover)
-        emptyBehavior = Self.value(defaults?.string(forKey: Keys.emptyBehavior), default: .rest)
-        character = Self.value(defaults?.string(forKey: Keys.character), default: .nibble)
+    /// The pet is a new, always-visible piece of UI in someone else's menu bar
+    /// app, so every default here keeps it out of the way until asked for.
+    static let `default` = PetSettings(
+        isEnabled: false,
+        size: .medium,
+        bubbleMode: .hover,
+        emptyBehavior: .rest,
+        character: .nibble
+    )
+
+    static func load(from defaults: UserDefaults? = AppGroup.defaults) -> PetSettings {
+        guard let defaults else { return .default }
+        return PetSettings(
+            isEnabled: defaults.bool(forKey: Keys.enabled),
+            size: value(defaults.string(forKey: Keys.size), default: .medium),
+            bubbleMode: value(defaults.string(forKey: Keys.bubbleMode), default: .hover),
+            emptyBehavior: value(defaults.string(forKey: Keys.emptyBehavior), default: .rest),
+            character: value(defaults.string(forKey: Keys.character), default: .nibble)
+        )
+    }
+
+    /// Used by the pet's own "Hide Pet" menu item, which has no view to bind to.
+    static func setEnabled(_ enabled: Bool, in defaults: UserDefaults? = AppGroup.defaults) {
+        defaults?.set(enabled, forKey: Keys.enabled)
     }
 
     // MARK: - Position
 
-    /// The pet's stored position, or `nil` when it has never been moved.
-    var savedPosition: PetPosition? {
+    /// Where the user last dropped the pet, or `nil` if it has never been moved.
+    static func savedPosition(in defaults: UserDefaults? = AppGroup.defaults) -> PetPosition? {
         guard let data = defaults?.data(forKey: Keys.position) else { return nil }
         return try? JSONDecoder().decode(PetPosition.self, from: data)
     }
 
-    /// Persists a dropped position. Intentionally silent: this must not fire
-    /// `onChange` and rebuild the panel the user just finished dragging.
-    func savePosition(_ position: PetPosition) {
+    static func savePosition(_ position: PetPosition, in defaults: UserDefaults? = AppGroup.defaults) {
         guard let data = try? JSONEncoder().encode(position) else { return }
         defaults?.set(data, forKey: Keys.position)
     }
 
     /// Forgets the stored position so the pet returns to its default corner.
-    func clearPosition() {
+    static func clearPosition(in defaults: UserDefaults? = AppGroup.defaults) {
         defaults?.removeObject(forKey: Keys.position)
-    }
-
-    // MARK: - Persistence
-
-    /// Writes a changed setting and notifies. No-ops when the value is unchanged,
-    /// so redundant writes never cascade into a panel rebuild.
-    private func commit<T: Equatable>(
-        _ new: T,
-        _ old: T,
-        key: String,
-        encode: (T) -> Any
-    ) {
-        guard new != old else { return }
-        defaults?.set(encode(new), forKey: key)
-        onChange?()
     }
 
     private static func value<T: RawRepresentable>(

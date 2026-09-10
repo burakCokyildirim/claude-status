@@ -13,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let pluginInstaller = PluginInstaller()
     private var eventMonitor: Any?
     private var settingsWindow: NSWindow?
-    private let petSettings = PetSettings()
+    private var petSettings = PetSettings.load()
     private var petController: PetWindowController?
 
     /// Sparkle updater controller for automatic updates.
@@ -40,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupPopover()
         setupURLHandler()
         monitor.start()
-        setupPet()
+        syncPet()
 
         // Initialize Sparkle only if a valid EdDSA public key is configured
         if let edKey = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String,
@@ -93,10 +93,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Desktop Pet
 
-    private func setupPet() {
-        petSettings.onChange = { [weak self] in
-            self?.syncPet()
-        }
+    /// Re-reads the pet settings and reconfigures when one actually changed.
+    ///
+    /// Mirrors how `iconStyle` is picked up: the settings window writes through
+    /// `@AppStorage`, and this rides the status item's existing tick rather than
+    /// adding an observer.
+    private func reloadPetSettingsIfNeeded() {
+        let latest = PetSettings.load()
+        guard latest != petSettings else { return }
+        petSettings = latest
         syncPet()
     }
 
@@ -110,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let petController {
-            petController.settingsDidChange()
+            petController.update(settings: petSettings)
         } else {
             let controller = PetWindowController(
                 settings: petSettings,
@@ -124,7 +129,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.showSettings()
                 },
                 onHide: { [weak self] in
-                    self?.petSettings.isEnabled = false
+                    PetSettings.setEnabled(false)
+                    // Take effect now rather than on the next tick.
+                    self?.reloadPetSettingsIfNeeded()
                 }
             )
             controller.show()
@@ -156,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 self?.updateStatusIcon()
                 // The pet rides this tick rather than starting a timer of its own.
+                self?.reloadPetSettingsIfNeeded()
                 self?.updatePet()
             }
         }
@@ -538,7 +546,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.profileStore.refresh()
         let settingsView = SettingsView(
             profileStore: monitor.profileStore,
-            petSettings: petSettings,
             updater: updaterController?.updater,
             onInstallPlugin: { [weak self] profile in
                 self?.performPluginInstall(for: [profile])

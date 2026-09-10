@@ -6,7 +6,6 @@ import SwiftUI
 /// Settings window with icon style, launch at login, and profile/plugin management.
 struct SettingsView: View {
     @Bindable var profileStore: ProfileStore
-    @Bindable var petSettings: PetSettings
     var updater: SPUUpdater?
     var onInstallPlugin: (ClaudeProfile) -> Void
     var onUninstallPlugin: (ClaudeProfile) -> Void
@@ -14,6 +13,17 @@ struct SettingsView: View {
     @AppStorage("iconStyle", store: AppGroup.defaults)
     private var iconStyle: SessionIconStyle = .emoji
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+
+    @AppStorage(PetSettings.Keys.enabled, store: AppGroup.defaults)
+    private var petEnabled: Bool = false
+    @AppStorage(PetSettings.Keys.character, store: AppGroup.defaults)
+    private var petCharacter: PetCharacterID = .nibble
+    @AppStorage(PetSettings.Keys.size, store: AppGroup.defaults)
+    private var petSize: PetSize = .medium
+    @AppStorage(PetSettings.Keys.bubbleMode, store: AppGroup.defaults)
+    private var petBubbleMode: PetBubbleMode = .hover
+    @AppStorage(PetSettings.Keys.emptyBehavior, store: AppGroup.defaults)
+    private var petEmptyBehavior: PetEmptyBehavior = .rest
 
     var body: some View {
         Form {
@@ -34,7 +44,38 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("Show Desktop Pet", isOn: $petSettings.isEnabled)
+                Toggle("Show Desktop Pet", isOn: $petEnabled)
+
+                if petEnabled {
+                    Picker("Character", selection: $petCharacter) {
+                        ForEach(PetCharacterID.allCases, id: \.self) { character in
+                            Text(character.label).tag(character)
+                        }
+                    }
+                    Text(petCharacter.blurb)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+
+                    Picker("Pet Size", selection: $petSize) {
+                        ForEach(PetSize.allCases, id: \.self) { size in
+                            Text(size.label).tag(size)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Picker("Speech Bubbles", selection: $petBubbleMode) {
+                        ForEach(PetBubbleMode.allCases, id: \.self) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Picker("When No Sessions Are Running", selection: $petEmptyBehavior) {
+                        ForEach(PetEmptyBehavior.allCases, id: \.self) { behavior in
+                            Text(behavior.label).tag(behavior)
+                        }
+                    }
+                }
             } header: {
                 Text("Desktop Pet")
             } footer: {
