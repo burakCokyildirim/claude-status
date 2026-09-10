@@ -110,3 +110,115 @@ struct PetPresenterTests {
         #expect(PetPresenter.resolve(from: sessions.shuffled())?.sessionId == expected)
     }
 }
+
+struct PetMotionTests {
+
+    private static let all: [PetAnimation] = [.still, .breathe, .work, .sweep, .poke, .startle]
+
+    /// Loops must not jump when they wrap, and one-shots must settle. Both fall
+    /// out of every animation starting and ending on the identity transform.
+    @Test func everyAnimationOpensAndClosesOnIdentity() {
+        for animation in Self.all {
+            #expect(PetMotion.transform(for: animation, phase: 0) == .identity)
+            #expect(PetMotion.transform(for: animation, phase: 1) == .identity)
+        }
+    }
+
+    @Test func phaseIsClampedOutsideTheUnitRange() {
+        for animation in Self.all {
+            #expect(PetMotion.transform(for: animation, phase: -3) == .identity)
+            #expect(PetMotion.transform(for: animation, phase: 42) == .identity)
+        }
+    }
+
+    @Test func loopingAnimationsActuallyMove() {
+        for animation in [PetAnimation.breathe, .work, .sweep, .poke, .startle] {
+            let moved = stride(from: 0.05, to: 1.0, by: 0.05).contains { phase in
+                PetMotion.transform(for: animation, phase: phase) != .identity
+            }
+            #expect(moved, "\(animation) never leaves the identity transform")
+        }
+    }
+
+    /// The pet is static when idle, which is what lets the driver run no timer.
+    @Test func stillNeverMoves() {
+        for phase in stride(from: 0.0, through: 1.0, by: 0.05) {
+            #expect(PetMotion.transform(for: .still, phase: phase) == .identity)
+        }
+        #expect(!PetAnimation.still.isAnimated)
+    }
+
+    @Test func onlyReactionsAreOneShots() {
+        #expect(PetAnimation.poke.duration != nil)
+        #expect(PetAnimation.startle.duration != nil)
+        for animation in [PetAnimation.still, .breathe, .work, .sweep] {
+            #expect(animation.duration == nil)
+        }
+    }
+
+    @Test func restingAnimationFollowsSessionState() {
+        #expect(PetAnimation.resting(for: .active) == .work)
+        #expect(PetAnimation.resting(for: .waiting) == .breathe)
+        #expect(PetAnimation.resting(for: .compacting) == .sweep)
+        #expect(PetAnimation.resting(for: .idle) == .still)
+        #expect(PetAnimation.resting(for: nil) == .still)
+    }
+
+    /// Grid offsets stay whole so the pixel art never lands between grid lines.
+    @Test func offsetsStayOnTheGrid() {
+        for animation in Self.all {
+            for phase in stride(from: 0.0, through: 1.0, by: 0.02) {
+                let transform = PetMotion.transform(for: animation, phase: phase)
+                #expect(transform.offsetX == transform.offsetX.rounded())
+                #expect(transform.offsetY == transform.offsetY.rounded())
+            }
+        }
+    }
+}
+
+struct PetCharacterTests {
+
+    /// The renderer indexes rows and columns directly, so a mis-sized row would
+    /// silently clip or crash rather than look wrong.
+    @Test func everyCharacterIsAWellFormedGrid() {
+        for id in PetCharacterID.allCases {
+            let character = PetCharacter.character(for: id)
+            #expect(character.body.count == PetLayout.gridHeight)
+            for row in character.body {
+                #expect(row.count == PetLayout.gridWidth)
+            }
+            for (index, row) in character.airborneRows {
+                #expect(character.body.indices.contains(index))
+                #expect(row.count == PetLayout.gridWidth)
+            }
+        }
+    }
+
+    @Test func composedSpritesKeepTheirShape() {
+        for id in PetCharacterID.allCases {
+            let character = PetCharacter.character(for: id)
+            for state in [SessionState.active, .waiting, .compacting, .idle] {
+                for airborne in [false, true] {
+                    let sprite = character.sprite(for: state, airborne: airborne)
+                    #expect(sprite.count == PetLayout.gridHeight)
+                    for row in sprite {
+                        #expect(row.count == PetLayout.gridWidth)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Each state has to be distinguishable, or the pet conveys nothing.
+    @Test func eachStateLooksDifferent() {
+        let character = PetCharacter.character(for: .nibble)
+        let sprites = [SessionState.active, .waiting, .compacting, .idle].map {
+            character.sprite(for: $0, airborne: false)
+        }
+        for (index, sprite) in sprites.enumerated() {
+            for other in sprites[(index + 1)...] {
+                #expect(sprite != other)
+            }
+        }
+    }
+}

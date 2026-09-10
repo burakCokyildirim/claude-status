@@ -116,6 +116,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.show()
             petController = controller
         }
+        updatePet()
+    }
+
+    /// Points the pet at the current highest-priority session.
+    private func updatePet() {
+        petController?.apply(sessions: monitor.sessions)
     }
 
     // MARK: - Status Item
@@ -135,6 +141,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Defer to avoid layout recursion if the status bar is mid-layout
             DispatchQueue.main.async {
                 self?.updateStatusIcon()
+                // The pet rides this tick rather than starting a timer of its own.
+                self?.updatePet()
             }
         }
     }
