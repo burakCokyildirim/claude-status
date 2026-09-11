@@ -148,6 +148,8 @@ State is reported by the hook script in `.cstatus` files:
 
 **IDEs** (via process tree): Xcode, VS Code, JetBrains IDEs, Zed
 
+**Claude desktop app** (via `CLAUDE_CODE_ENTRYPOINT=claude-desktop` on the Claude process): opens the exact session with `claude://code/continue`, matched through the app's `claude-code-sessions` records
+
 ### Desktop Pet
 
 An optional floating character, off by default. `PetWindowController` owns a borderless, non-activating `NSPanel` at `.floating` that joins all Spaces; SwiftUI draws into it and it lets every click through, while `PetContentView` owns every event from a sprite-sized child panel on top, so only the sprite is clickable and everything around it clicks through. `PetPresenter` picks the single session it stands for, reusing `SessionState.sortOrder`. Characters are 16x24 pixel-art string grids in `PetCharacter`; all motion comes from `PetMotion`, a pure function from animation and phase to a transform. Settings live in the App Group defaults under `pet*` keys and are re-read on the status item's existing one-second tick — the pet starts no timer of its own, and runs no frame timer when idle, hidden, or under reduced motion.

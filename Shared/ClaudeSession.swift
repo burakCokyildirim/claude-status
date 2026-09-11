@@ -82,6 +82,7 @@ enum SessionSource: Codable, Equatable {
     case vscode
     case jetbrains(ide: String)  // e.g. "PyCharm", "IntelliJ IDEA"
     case zed
+    case claudeDesktop  // Claude Code in the Claude desktop app
 
     var label: String {
         switch self {
@@ -90,6 +91,7 @@ enum SessionSource: Codable, Equatable {
         case .vscode: "VS Code"
         case .jetbrains(let ide): ide
         case .zed: "Zed"
+        case .claudeDesktop: "Claude"
         }
     }
 

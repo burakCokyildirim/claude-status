@@ -253,6 +253,12 @@ struct SessionDiscovery {
             }
         }
 
+        // The Claude desktop app marks the sessions it runs. Checked on the
+        // process itself: the ppid the hook reports does not lead back to the app.
+        if readEnvironmentVariable(for: pid, name: "CLAUDE_CODE_ENTRYPOINT") == "claude-desktop" {
+            return .claudeDesktop
+        }
+
         // Check environment variables on the Claude process
         if let termEmulator = readEnvironmentVariable(for: pid, name: "TERMINAL_EMULATOR"),
            termEmulator.hasPrefix("JetBrains") {
