@@ -20,7 +20,10 @@ final class PetWindowController: NSObject {
     private let onShowSettings: () -> Void
     private let onHide: () -> Void
 
+    /// Draws the pet and lets every click through to the windows underneath.
     private var panel: PetPanel?
+    /// Takes the mouse over the sprite only; a child window of `panel`.
+    private var hitPanel: PetPanel?
     private var hostingView: NSHostingView<PetView>?
 
     // MARK: Session state
@@ -80,23 +83,32 @@ final class PetWindowController: NSObject {
         builtScale = scale
         let frame = NSRect(origin: .zero, size: PetLayout.panelSize(scale: scale))
 
-        let content = PetContentView(frame: frame)
-        content.interactiveRect = PetLayout.spriteRect(scale: scale)
-        content.controller = self
-
         let hosting = NSHostingView(rootView: makeView())
         hosting.frame = frame
         hosting.autoresizingMask = [.width, .height]
-        content.addSubview(hosting)
 
-        let panel = PetPanel(contentRect: frame)
-        panel.contentView = content
-        content.wantsLayer = true
+        let panel = PetPanel(contentRect: frame, acceptsMouse: false)
+        panel.contentView = hosting
+
+        // Sprite-sized, so the sprite is the only thing that takes the mouse.
+        let spriteFrame = NSRect(origin: .zero, size: PetLayout.spriteRect(scale: scale).size)
+        let content = PetContentView(frame: spriteFrame)
+        content.interactiveRect = spriteFrame
+        content.controller = self
+        let hitPanel = PetPanel(contentRect: spriteFrame, acceptsMouse: true)
+        hitPanel.contentView = content
 
         self.panel = panel
+        self.hitPanel = hitPanel
         self.hostingView = hosting
 
         applyStoredPosition()
+        // Attached once it sits over the sprite: from then on it moves, hides,
+        // and follows Spaces along with the panel.
+        if let sprite = interactiveScreenRect {
+            hitPanel.setFrame(sprite, display: false)
+        }
+        panel.addChildWindow(hitPanel, ordered: .above)
         registerObservers()
 
         // `orderFrontRegardless` rather than `orderFront`, which an inactive app
@@ -105,7 +117,7 @@ final class PetWindowController: NSObject {
         updateAnimationDriver()
     }
 
-    /// Destroys the panel and everything it drives.
+    /// Destroys both panels and everything they drive.
     func tearDown() {
         frameTimer?.invalidate()
         frameTimer = nil
@@ -127,6 +139,12 @@ final class PetWindowController: NSObject {
         workspaceObservers.removeAll()
         defaultObservers.removeAll()
 
+        if let hitPanel {
+            panel?.removeChildWindow(hitPanel)
+            hitPanel.contentView = nil
+            hitPanel.close()
+        }
+        hitPanel = nil
         panel?.contentView = nil
         panel?.orderOut(nil)
         panel?.close()

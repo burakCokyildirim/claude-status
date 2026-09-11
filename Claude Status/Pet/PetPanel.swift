@@ -1,13 +1,20 @@
 import AppKit
 
-/// The desktop pet's window: borderless, transparent, always on top, never key.
+/// The desktop pet's windows: borderless, transparent, always on top, never key.
 ///
 /// Follows the tooltip panel in `ProductivityBarView` with two deliberate
-/// differences: the pet accepts mouse events, and it must stay visible while the
+/// differences: the pet takes mouse events, and it must stay visible while the
 /// app is inactive — which, for a menu bar-only app, is nearly always.
+///
+/// The pet is two of these, because one panel cannot let clicks through its
+/// transparent margin and still take them on the sprite. With
+/// `ignoresMouseEvents` set to false AppKit claims every click in the frame;
+/// left unset, every click goes through, sprite included, since layer-backed
+/// content is invisible to the window server's hit test. So the full-size panel
+/// that draws the pet ignores the mouse, and a sprite-sized child panel takes it.
 final class PetPanel: NSPanel {
 
-    init(contentRect: NSRect) {
+    init(contentRect: NSRect, acceptsMouse: Bool) {
         super.init(
             contentRect: contentRect,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -41,7 +48,7 @@ final class PetPanel: NSPanel {
         animationBehavior = .none
         isReleasedWhenClosed = false
         acceptsMouseMovedEvents = true
-        ignoresMouseEvents = false
+        ignoresMouseEvents = !acceptsMouse
         tabbingMode = .disallowed
         isExcludedFromWindowsMenu = true
     }

@@ -150,7 +150,7 @@ State is reported by the hook script in `.cstatus` files:
 
 ### Desktop Pet
 
-An optional floating character, off by default. `PetWindowController` owns a borderless, non-activating `NSPanel` at `.floating` that joins all Spaces; SwiftUI draws into it while `PetContentView` owns every event (`hitTest` never calls `super`, so only the sprite is clickable and the transparent margin clicks through). `PetPresenter` picks the single session it stands for, reusing `SessionState.sortOrder`. Characters are 16x24 pixel-art string grids in `PetCharacter`; all motion comes from `PetMotion`, a pure function from animation and phase to a transform. Settings live in the App Group defaults under `pet*` keys and are re-read on the status item's existing one-second tick — the pet starts no timer of its own, and runs no frame timer when idle, hidden, or under reduced motion.
+An optional floating character, off by default. `PetWindowController` owns a borderless, non-activating `NSPanel` at `.floating` that joins all Spaces; SwiftUI draws into it and it lets every click through, while `PetContentView` owns every event from a sprite-sized child panel on top, so only the sprite is clickable and everything around it clicks through. `PetPresenter` picks the single session it stands for, reusing `SessionState.sortOrder`. Characters are 16x24 pixel-art string grids in `PetCharacter`; all motion comes from `PetMotion`, a pure function from animation and phase to a transform. Settings live in the App Group defaults under `pet*` keys and are re-read on the status item's existing one-second tick — the pet starts no timer of its own, and runs no frame timer when idle, hidden, or under reduced motion.
 
 ### Productivity Tracking
 

@@ -1,11 +1,11 @@
 import AppKit
 
-/// The pet panel's content view.
+/// Fills the sprite-sized panel that takes the pet's mouse events.
 ///
-/// SwiftUI draws the pet; this view owns every event. `hitTest(_:)` never calls
-/// `super`, so nothing added on the SwiftUI side — a background, a wider content
-/// shape — can silently widen the clickable region and start eating clicks meant
-/// for whatever is underneath.
+/// SwiftUI draws the pet in the panel underneath, which lets every click
+/// through; this view owns every event. `hitTest(_:)` never calls `super`, so
+/// nothing added here can widen the clickable region past the sprite and start
+/// eating clicks meant for whatever is underneath.
 final class PetContentView: NSView {
 
     weak var controller: PetWindowController?
