@@ -21,7 +21,6 @@ nonisolated struct PetPalette {
 /// order of magnitude to produce what the transform layer already gives.
 nonisolated struct PetCharacter {
 
-    let id: PetCharacterID
     let palette: PetPalette
 
     /// The resting body: `PetLayout.gridHeight` rows of `PetLayout.gridWidth`
@@ -164,7 +163,6 @@ extension PetCharacter {
 
     /// A tidy little shell bot with a wedge bitten out of the top of its dome.
     static let nibble = PetCharacter(
-        id: .nibble,
         palette: PetPalette(
             outline: Color(red: 0.11, green: 0.13, blue: 0.18),
             body: Color(red: 0.42, green: 0.55, blue: 0.75),
@@ -208,7 +206,6 @@ extension PetCharacter {
 
     /// A fuzzball that cannot leave a mess alone. Irregular tufts, wide base.
     static let lint = PetCharacter(
-        id: .lint,
         palette: PetPalette(
             outline: Color(red: 0.16, green: 0.14, blue: 0.13),
             body: Color(red: 0.68, green: 0.62, blue: 0.56),
@@ -251,7 +248,6 @@ extension PetCharacter {
 
     /// Quiet until it isn't. A kernel with a puff on top and a narrow base.
     static let kernel = PetCharacter(
-        id: .kernel,
         palette: PetPalette(
             outline: Color(red: 0.22, green: 0.15, blue: 0.06),
             body: Color(red: 0.93, green: 0.78, blue: 0.36),

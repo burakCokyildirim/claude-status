@@ -21,7 +21,6 @@ final class PetWindowController: NSObject {
     private let onHide: () -> Void
 
     private var panel: PetPanel?
-    private var contentView: PetContentView?
     private var hostingView: NSHostingView<PetView>?
 
     // MARK: Session state
@@ -95,7 +94,6 @@ final class PetWindowController: NSObject {
         content.wantsLayer = true
 
         self.panel = panel
-        self.contentView = content
         self.hostingView = hosting
 
         applyStoredPosition()
@@ -112,6 +110,11 @@ final class PetWindowController: NSObject {
         frameTimer?.invalidate()
         frameTimer = nil
         oneShot = nil
+        // Interaction state belongs to the view that is about to go away. Left
+        // set, a rebuild triggered while the mouse is over the pet would leave
+        // the bubble stuck open until the new tracking area saw an exit.
+        isHovered = false
+        isDragging = false
         // Drops any re-clamp still waiting out its debounce.
         screenChangeGeneration += 1
 
@@ -128,7 +131,6 @@ final class PetWindowController: NSObject {
         panel?.orderOut(nil)
         panel?.close()
         panel = nil
-        contentView = nil
         hostingView = nil
     }
 
