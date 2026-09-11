@@ -267,7 +267,8 @@ final class PetWindowController: NSObject {
         guard frameTimer == nil else { return }
 
         let timer = Timer(timeInterval: Self.frameInterval, repeats: true) { [weak self] _ in
-            self?.tick()
+            // Added to the main run loop below, so it always fires on the main thread.
+            MainActor.assumeIsolated { self?.tick() }
         }
         // `.common` so the pet keeps moving while a menu is being tracked.
         RunLoop.main.add(timer, forMode: .common)
