@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Geometry for the desktop pet's panel.

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// A display, reduced to the facts the pet's placement needs.

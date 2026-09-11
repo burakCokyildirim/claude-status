@@ -9,7 +9,12 @@ import Foundation
 ///
 /// Ties break on most recent activity, then on ascending session ID, so the choice
 /// is fully deterministic even when two sessions share a timestamp.
-nonisolated enum PetPresenter {
+///
+/// Main actor-isolated because `SessionState.sortOrder` is: the project builds
+/// with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`. Still a pure function of its
+/// input, so it needs no window, screen, or running app to test.
+@MainActor
+enum PetPresenter {
 
     /// The session the pet should represent, or `nil` when no sessions are live.
     static func resolve(from sessions: [ClaudeSession]) -> ClaudeSession? {

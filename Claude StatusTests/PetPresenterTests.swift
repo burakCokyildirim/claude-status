@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import Claude_Status
 
+@MainActor
 struct PetPresenterTests {
 
     /// Fixed reference date so timestamp ordering is explicit in each test.

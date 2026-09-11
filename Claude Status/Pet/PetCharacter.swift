@@ -159,7 +159,7 @@ nonisolated enum PetFace {
 
 // MARK: - Characters
 
-extension PetCharacter {
+nonisolated extension PetCharacter {
 
     /// A tidy little shell bot with a wedge bitten out of the top of its dome.
     static let nibble = PetCharacter(
