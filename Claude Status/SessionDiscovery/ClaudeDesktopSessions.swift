@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// What the Claude desktop app records about one Claude Code session.
@@ -6,19 +7,22 @@ struct ClaudeDesktopSession: Equatable {
     let sessionId: String
     /// Epoch milliseconds, the way the desktop app stores them.
     let lastActivityAt: Double
+    /// Stamped when the app brings the session up, not while it is being read.
     let lastFocusedAt: Double
-
-    /// The session moved after the user last looked at it.
-    var isUnread: Bool { lastActivityAt > lastFocusedAt }
 }
 
 /// Reads the Claude desktop app's session records: how Claude Status learns a
-/// desktop session's own ID, and whether it has gone unread.
+/// desktop session's own ID, and whether its last answer has been seen.
 ///
 /// The layout — `claude-code-sessions/<account>/<organization>/local_<id>.json`,
 /// tied to our sessions by `cliSessionId` — belongs to the desktop app, so every
 /// lookup degrades to "no record" rather than failing.
 struct ClaudeDesktopSessionStore {
+
+    static let claudeDesktopBundleId = "com.anthropic.claudefordesktop"
+
+    /// Where our own "you have seen this" stamps live, in the App Group.
+    static let seenKey = "claudeDesktopSeenAt"
 
     /// Both names the desktop app has used for its support directory.
     static var defaultRoots: [URL] {
@@ -37,15 +41,28 @@ struct ClaudeDesktopSessionStore {
     private static let scanInterval: TimeInterval = 2
 
     private let roots: [URL]
+    private let defaults: UserDefaults?
+    private let isDesktopAppInFront: @MainActor () -> Bool
+
     private var cache: [URL: (modified: Date, cliSessionId: String, session: ClaudeDesktopSession)] = [:]
     private var byCLISessionId: [String: ClaudeDesktopSession] = [:]
-    /// The session the app focused last — the one on screen, as near as these
-    /// records can say.
-    private var frontmostCLISessionId: String?
+    /// Epoch milliseconds, keyed by our session ID: when the user was last
+    /// watching that session.
+    private var seenAt: [String: Double]
     private var lastScan: Date = .distantPast
 
-    init(roots: [URL] = ClaudeDesktopSessionStore.defaultRoots) {
+    init(
+        roots: [URL] = ClaudeDesktopSessionStore.defaultRoots,
+        defaults: UserDefaults? = AppGroup.defaults,
+        isDesktopAppInFront: @escaping @MainActor () -> Bool = {
+            NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                == ClaudeDesktopSessionStore.claudeDesktopBundleId
+        }
+    ) {
         self.roots = roots
+        self.defaults = defaults
+        self.isDesktopAppInFront = isDesktopAppInFront
+        self.seenAt = Self.loadSeen(from: defaults)
     }
 
     /// The desktop app's record for the session the hook reports as `cliSessionId`.
@@ -72,23 +89,15 @@ struct ClaudeDesktopSessionStore {
         }
         cache = refreshed
         byCLISessionId = index
-        // Ties break on the ID so the pick cannot flicker between two records.
-        frontmostCLISessionId = index
-            .max { ($0.value.lastFocusedAt, $1.key) < ($1.value.lastFocusedAt, $0.key) }?
-            .key
+        recordWhatIsBeingRead(now: now)
     }
 
     /// The state to show for a session the hook reported as `hookState`.
     ///
-    /// A finished desktop session the user has not looked at since is their
+    /// A desktop session that has spoken since the user last saw it is their
     /// move, not idle: the hook writes idle whenever a turn ends without a
-    /// question, so the unread mark is the only thing separating the two.
-    ///
-    /// The session in front is never counted unread, however loudly its record
-    /// says so. `lastFocusedAt` is stamped when the app brings a session up and
-    /// then left alone, while `lastActivityAt` keeps climbing as Claude works —
-    /// so the session being read right now reads as unread the whole time it is
-    /// open, which would put a "waiting" on the one session that plainly is not.
+    /// question, so an answer nobody has read looks exactly like a session
+    /// abandoned days ago.
     func resolvedState(
         hookState: SessionState,
         source: SessionSource,
@@ -96,11 +105,61 @@ struct ClaudeDesktopSessionStore {
     ) -> SessionState {
         guard source == .claudeDesktop,
               hookState == .idle,
-              cliSessionId != frontmostCLISessionId,
-              session(forCLISession: cliSessionId)?.isUnread == true else {
+              let session = byCLISessionId[cliSessionId],
+              session.lastActivityAt > lastSeen(cliSessionId) else {
             return hookState
         }
         return .waiting
+    }
+
+    // MARK: - Seen
+
+    /// Marks the session on screen as seen, so an answer the user watched land
+    /// is not announced back to them the moment they look somewhere else.
+    ///
+    /// The desktop app's own `lastFocusedAt` cannot carry this: it is stamped
+    /// when a session is brought up and then left alone, so a session being read
+    /// for an hour keeps an hour-old stamp while its activity climbs. This runs
+    /// on the scan the app already does, which is often enough — the answer the
+    /// user is watching arrives on a file change that triggers one.
+    ///
+    /// The app being in front is taken as reading the session it last focused.
+    /// Someone sitting on its settings screen is counted as reading too, which
+    /// costs a mark the user might have wanted and never raises a false one.
+    private mutating func recordWhatIsBeingRead(now: Date) {
+        var updated = seenAt
+        if isDesktopAppInFront(), let open = focusedCLISessionId() {
+            updated[open] = now.timeIntervalSince1970 * 1000
+        }
+        // Sessions the app has dropped take their stamps with them — but only
+        // once it has listed some, so an unreadable directory cannot wipe them
+        // and leave every session looking unread at once.
+        if !byCLISessionId.isEmpty {
+            updated = updated.filter { byCLISessionId[$0.key] != nil }
+        }
+        // This runs on every scan; the App Group is only written when a mark moved.
+        guard updated != seenAt else { return }
+        seenAt = updated
+        defaults?.set(seenAt, forKey: Self.seenKey)
+    }
+
+    /// The last point we can show the user saw the session: our own stamp from
+    /// while it was on screen, or the app's focus stamp, whichever is later.
+    private func lastSeen(_ cliSessionId: String) -> Double {
+        max(seenAt[cliSessionId] ?? 0, byCLISessionId[cliSessionId]?.lastFocusedAt ?? 0)
+    }
+
+    /// The session the app has up: the last one it focused.
+    private func focusedCLISessionId() -> String? {
+        // Ties break on the ID so the pick cannot flicker between two records.
+        byCLISessionId
+            .max { ($0.value.lastFocusedAt, $1.key) < ($1.value.lastFocusedAt, $0.key) }?
+            .key
+    }
+
+    private static func loadSeen(from defaults: UserDefaults?) -> [String: Double] {
+        guard let stored = defaults?.dictionary(forKey: seenKey) else { return [:] }
+        return stored.compactMapValues { ($0 as? NSNumber)?.doubleValue }
     }
 
     // MARK: - Records

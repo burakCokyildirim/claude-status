@@ -48,8 +48,6 @@ struct SessionFocuser {
 
     // MARK: - Claude Desktop
 
-    private static let claudeDesktopBundleId = "com.anthropic.claudefordesktop"
-
     /// Opens the session itself in the Claude desktop app, or at least brings
     /// the app forward when the session cannot be matched.
     private func focusClaudeDesktop(cliSessionId: String) {
@@ -59,7 +57,7 @@ struct SessionFocuser {
            let url = Self.claudeDesktopURL(forDesktopSession: desktop.sessionId) {
             NSWorkspace.shared.open(url)
         } else {
-            activateApp(bundleId: Self.claudeDesktopBundleId)
+            activateApp(bundleId: ClaudeDesktopSessionStore.claudeDesktopBundleId)
         }
     }
 

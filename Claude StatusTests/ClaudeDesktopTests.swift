@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import Claude_Status
 
-/// Sessions run by the Claude desktop app: reading its records, spotting the
-/// ones the user has not looked at, and the link that opens them.
+/// Sessions run by the Claude desktop app: reading its records, telling an
+/// answer nobody has seen from an abandoned session, and the link that opens one.
 @MainActor
 struct ClaudeDesktopTests {
 
@@ -34,75 +34,109 @@ struct ClaudeDesktopTests {
         return root
     }
 
-    private func makeStore(_ records: [Record]) throws -> (ClaudeDesktopSessionStore, URL) {
-        let root = try makeSessionsRoot(records)
-        var store = ClaudeDesktopSessionStore(roots: [root])
-        store.refresh(force: true)
-        return (store, root)
+    /// Epoch milliseconds as a `Date`, so a test can say "the scan ran here".
+    private func at(_ milliseconds: Double) -> Date {
+        Date(timeIntervalSince1970: milliseconds / 1_000)
     }
 
-    /// A session in the background that Claude has spoken in since it was last
-    /// looked at, plus the session on screen — the newest focus stamp of the two.
-    private func makeTwoSessionStore() throws -> (ClaudeDesktopSessionStore, URL) {
-        try makeStore([
-            Record(desktopId: "local_unread", cliId: "cli-unread", lastActivityAt: 3_000, lastFocusedAt: 2_000),
+    private func makeDefaults() -> UserDefaults {
+        UserDefaults(suiteName: "claude-desktop-tests-\(UUID().uuidString)")!
+    }
+
+    /// One session the user answered in and left, plus the one the app has up.
+    /// The open session has spoken since its focus stamp, the way a session
+    /// being read does while Claude keeps working in it.
+    private func makeTwoSessionRoot() throws -> URL {
+        try makeSessionsRoot([
+            Record(desktopId: "local_away", cliId: "cli-away", lastActivityAt: 3_000, lastFocusedAt: 2_000),
             Record(desktopId: "local_open", cliId: "cli-open", lastActivityAt: 9_500, lastFocusedAt: 9_000)
         ])
     }
 
     @Test func findsTheDesktopRecordForAHookSession() throws {
-        let (store, root) = try makeStore([
+        let root = try makeSessionsRoot([
             Record(desktopId: "local_1111-aaaa", cliId: "cli-one"),
             Record(desktopId: "local_2222-bbbb", cliId: "cli-two")
         ])
         defer { try? FileManager.default.removeItem(at: root) }
+        var store = ClaudeDesktopSessionStore(roots: [root], defaults: makeDefaults()) { false }
+        store.refresh(force: true)
 
         #expect(store.session(forCLISession: "cli-two")?.sessionId == "local_2222-bbbb")
         #expect(store.session(forCLISession: "cli-nine") == nil)
     }
 
     @Test func survivesRootsThatAreNotThere() {
-        var store = ClaudeDesktopSessionStore(roots: [URL(fileURLWithPath: "/nope/claude-code-sessions")])
+        var store = ClaudeDesktopSessionStore(
+            roots: [URL(fileURLWithPath: "/nope/claude-code-sessions")],
+            defaults: makeDefaults()
+        ) { true }
         store.refresh(force: true)
 
         #expect(store.session(forCLISession: "cli-one") == nil)
         #expect(store.resolvedState(hookState: .idle, source: .claudeDesktop, cliSessionId: "cli-one") == .idle)
     }
 
-    /// Unread is the only thing separating a finished turn the user has seen from
-    /// one that is waiting for them.
-    @Test func unreadMeansActivityAfterTheLastLook() throws {
-        let (store, root) = try makeStore([
-            Record(desktopId: "local_read", cliId: "cli-read", lastActivityAt: 1_000, lastFocusedAt: 2_000),
-            Record(desktopId: "local_unread", cliId: "cli-unread", lastActivityAt: 3_000, lastFocusedAt: 2_000)
-        ])
+    /// The case the rule exists for: Claude answered while the user was in
+    /// another app, so nobody has seen it.
+    @Test func anAnswerTheUserWasAwayForIsTheirMove() throws {
+        let root = try makeTwoSessionRoot()
         defer { try? FileManager.default.removeItem(at: root) }
+        var store = ClaudeDesktopSessionStore(roots: [root], defaults: makeDefaults()) { false }
+        store.refresh(force: true, now: at(9_600))
 
-        #expect(store.session(forCLISession: "cli-read")?.isUnread == false)
-        #expect(store.session(forCLISession: "cli-unread")?.isUnread == true)
-    }
-
-    @Test func anUnreadFinishedDesktopSessionIsTheUsersMove() throws {
-        let (store, root) = try makeTwoSessionStore()
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        #expect(store.resolvedState(hookState: .idle, source: .claudeDesktop, cliSessionId: "cli-unread") == .waiting)
+        #expect(store.resolvedState(hookState: .idle, source: .claudeDesktop, cliSessionId: "cli-away") == .waiting)
         // A session still working, one running anywhere else, and one the app
         // has no record of all keep the state the hook reported.
-        #expect(store.resolvedState(hookState: .active, source: .claudeDesktop, cliSessionId: "cli-unread") == .active)
-        #expect(store.resolvedState(hookState: .compacting, source: .claudeDesktop, cliSessionId: "cli-unread") == .compacting)
-        #expect(store.resolvedState(hookState: .idle, source: .terminal(app: "Terminal"), cliSessionId: "cli-unread") == .idle)
+        #expect(store.resolvedState(hookState: .active, source: .claudeDesktop, cliSessionId: "cli-away") == .active)
+        #expect(store.resolvedState(hookState: .compacting, source: .claudeDesktop, cliSessionId: "cli-away") == .compacting)
+        #expect(store.resolvedState(hookState: .idle, source: .terminal(app: "Terminal"), cliSessionId: "cli-away") == .idle)
         #expect(store.resolvedState(hookState: .idle, source: .claudeDesktop, cliSessionId: "cli-none") == .idle)
     }
 
-    /// The record of the session on screen says unread the whole time it is
-    /// open: its focus stamp is set once, while Claude keeps working in it.
-    @Test func theSessionInFrontIsNeverTheUsersMove() throws {
-        let (store, root) = try makeTwoSessionStore()
+    /// Sitting in a session must not turn it into a notice about itself, however
+    /// old the app's own focus stamp has gone.
+    @Test func aSessionBeingWatchedIsNotAMove() throws {
+        let root = try makeTwoSessionRoot()
         defer { try? FileManager.default.removeItem(at: root) }
+        var store = ClaudeDesktopSessionStore(roots: [root], defaults: makeDefaults()) { true }
+        store.refresh(force: true, now: at(10_000))
 
-        #expect(store.session(forCLISession: "cli-open")?.isUnread == true)
         #expect(store.resolvedState(hookState: .idle, source: .claudeDesktop, cliSessionId: "cli-open") == .idle)
+        // The session in the background is still the user's move.
+        #expect(store.resolvedState(hookState: .idle, source: .claudeDesktop, cliSessionId: "cli-away") == .waiting)
+    }
+
+    /// Watching the answer arrive and then leaving the app must leave the
+    /// session quiet: the stamp was taken while it was on screen.
+    @Test func anAnswerWatchedLiveStaysQuietAfterLookingAway() throws {
+        let root = try makeTwoSessionRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = makeDefaults()
+        var inFront = true
+        var store = ClaudeDesktopSessionStore(roots: [root], defaults: defaults) { inFront }
+        store.refresh(force: true, now: at(10_000))  // read on screen
+
+        inFront = false
+        store.refresh(force: true, now: at(20_000))  // user moves to another app
+
+        #expect(store.resolvedState(hookState: .idle, source: .claudeDesktop, cliSessionId: "cli-open") == .idle)
+    }
+
+    /// The stamps outlive the app, so a relaunch does not reannounce answers
+    /// the user has already read.
+    @Test func whatWasSeenIsRemembered() throws {
+        let root = try makeTwoSessionRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = makeDefaults()
+        var store = ClaudeDesktopSessionStore(roots: [root], defaults: defaults) { true }
+        store.refresh(force: true, now: at(10_000))
+
+        var relaunched = ClaudeDesktopSessionStore(roots: [root], defaults: defaults) { false }
+        relaunched.refresh(force: true, now: at(20_000))
+
+        #expect(relaunched.resolvedState(hookState: .idle, source: .claudeDesktop, cliSessionId: "cli-open") == .idle)
+        #expect(relaunched.resolvedState(hookState: .idle, source: .claudeDesktop, cliSessionId: "cli-away") == .waiting)
     }
 
     /// The desktop app's link handler only accepts `local_` IDs, so anything
