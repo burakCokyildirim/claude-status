@@ -115,7 +115,8 @@ struct ClaudeDesktopTests {
     @Test func survivesRootsThatAreNotThere() {
         var store = ClaudeDesktopSessionStore(
             roots: [URL(fileURLWithPath: "/nope/claude-code-sessions")],
-            defaults: makeDefaults()
+            defaults: makeDefaults(),
+            focusLog: ClaudeDesktopFocusLog(url: URL(fileURLWithPath: "/nope/main.log"))
         ) { true }
         store.refresh(force: true)
 
@@ -253,6 +254,72 @@ struct ClaudeDesktopTests {
         #expect(!unread(store, "cli-nofocus", spokeAt: 9_000))
     }
 
+    /// The failure that drove this whole signal, end to end: the user leaves the
+    /// session for a plain chat in the same app. The app logs `null` twice in one
+    /// second and then writes nothing more — gaps of an hour happen — so a clear
+    /// that waits for another line never arrives and the session goes on being
+    /// marked read while Claude answers in it.
+    @Test func leavingASessionForAPlainChatStopsCountingAsReading() throws {
+        let root = try makeTwoSessionRoot()
+        let log = try makeFocusLog(["local_open"])
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: log)
+        }
+        var store = ClaudeDesktopSessionStore(
+            roots: [root], defaults: makeDefaults(), focusLog: ClaudeDesktopFocusLog(url: log)
+        ) { true }
+        store.refresh(force: true, now: at(10_000))
+        #expect(!unread(store, "cli-open", spokeAt: 9_500))
+
+        try append(to: log, "null")
+        try append(to: log, "null")
+        store.refresh(force: true, now: at(20_000))  // the app is still in front
+        store.refresh(force: true, now: at(30_000))  // and writes nothing more
+
+        #expect(unread(store, "cli-open", spokeAt: 25_000))
+    }
+
+    /// With no log to read — an older app, a quieter log level — the best guess
+    /// left is the session opened most recently, which is what this did before
+    /// the log existed. It must degrade to that rather than to "nothing is open".
+    @Test func withoutTheLogTheLastOpenedSessionCountsAsOnScreen() throws {
+        let root = try makeTwoSessionRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var store = ClaudeDesktopSessionStore(
+            roots: [root], defaults: makeDefaults(),
+            focusLog: ClaudeDesktopFocusLog(url: URL(fileURLWithPath: "/nope/main.log"))
+        ) { true }
+        store.refresh(force: true, now: at(10_000))
+
+        #expect(!unread(store, "cli-open", spokeAt: 9_500))
+        #expect(unread(store, "cli-away", spokeAt: 3_000))
+    }
+
+    /// A scan that lists nothing — an unreadable directory, a moved folder —
+    /// must not wipe the marks and leave every session looking unread at once.
+    @Test func marksSurviveAScanThatListsNothing() throws {
+        let root = try makeTwoSessionRoot()
+        let log = try makeFocusLog(["local_open"])
+        let hidden = root.appendingPathExtension("moved")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: hidden)
+            try? FileManager.default.removeItem(at: log)
+        }
+        var store = ClaudeDesktopSessionStore(
+            roots: [root], defaults: makeDefaults(), focusLog: ClaudeDesktopFocusLog(url: log)
+        ) { true }
+        store.refresh(force: true, now: at(10_000))
+
+        try FileManager.default.moveItem(at: root, to: hidden)
+        store.refresh(force: true, now: at(20_000))
+        try FileManager.default.moveItem(at: hidden, to: root)
+        store.refresh(force: true, now: at(30_000))
+
+        #expect(!unread(store, "cli-open", spokeAt: 9_500))
+    }
+
     // MARK: - Focus log
 
     @Test func theFocusLogReadsTheLastSwitch() throws {
@@ -293,6 +360,20 @@ struct ClaudeDesktopTests {
 
         try append(to: log, "null")
         reader.refresh()
+        #expect(reader.focus == .noSession)
+    }
+
+    @Test func aHeldNullSettlesEvenIfTheAppWritesNothingMore() throws {
+        let log = try makeFocusLog(["local_one"])
+        defer { try? FileManager.default.removeItem(at: log) }
+        var reader = ClaudeDesktopFocusLog(url: log)
+        reader.refresh()
+
+        try append(to: log, "null")
+        reader.refresh()
+        #expect(reader.focus == .session("local_one"))  // held for one scan
+
+        reader.refresh()  // no new bytes at all
         #expect(reader.focus == .noSession)
     }
 

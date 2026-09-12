@@ -187,8 +187,9 @@ final class PetWindowController: NSObject {
         // moved; without this the pet would rebuild its view once a second for
         // nothing, and would never be able to claim it is free when idle.
         // Idle sessions are not what the badge is for: it says how many sessions
-        // are doing something behind the one the pet stands for.
-        let busyCount = sessions.count { $0.state != .idle }
+        // are doing something behind the one the pet stands for. An unread one
+        // counts — the hook calls it idle, but it is holding an answer.
+        let busyCount = sessions.count { $0.state != .idle || $0.isUnread == true }
         guard sessionChanged || busyCount != sessionCount || !hasApplied else { return }
 
         session = resolved

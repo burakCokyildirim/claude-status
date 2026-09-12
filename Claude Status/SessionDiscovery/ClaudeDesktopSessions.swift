@@ -75,9 +75,20 @@ struct ClaudeDesktopSessionStore {
     }
 
     mutating func refresh(force: Bool = false, now: Date = Date()) {
-        guard force || now.timeIntervalSince(lastScan) >= Self.scanInterval else { return }
-        lastScan = now
+        // Walking the directories is the expensive part, and the only part worth
+        // holding back. Tailing the log and stamping one mark cost a file open
+        // and a dictionary compare, and skipping them would flash unread at a
+        // user watching the answer land: the hook's own notification brings a
+        // scan straight here, well inside the interval.
+        if force || now.timeIntervalSince(lastScan) >= Self.scanInterval {
+            lastScan = now
+            readRecords()
+        }
+        focusLog.refresh()
+        recordWhatIsBeingRead(now: now)
+    }
 
+    private mutating func readRecords() {
         var refreshed: [URL: (modified: Date, cliSessionId: String, session: ClaudeDesktopSession)] = [:]
         var index: [String: ClaudeDesktopSession] = [:]
         for file in recordFiles() {
@@ -101,9 +112,6 @@ struct ClaudeDesktopSessionStore {
         }
         cache = refreshed
         byCLISessionId = index
-
-        focusLog.refresh()
-        recordWhatIsBeingRead(now: now)
     }
 
     /// Whether the desktop app has output here the user has not seen.

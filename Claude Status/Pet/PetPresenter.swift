@@ -2,10 +2,12 @@ import Foundation
 
 /// Resolves which single session the desktop pet represents.
 ///
-/// The pet always stands for exactly one session. The ordering reuses the app's
-/// existing state vocabulary (`SessionState.sortOrder`) so the pet agrees with the
-/// menu bar dropdown and the widgets: waiting first (it needs input and must never
-/// hide behind a working session), then active, then compacting, then idle.
+/// The pet always stands for exactly one session, picked in the order the
+/// popover now lists them (`ClaudeSession.attentionRank`): waiting first, because
+/// it is blocked until the user answers and must never hide behind a working
+/// session; then unread, an answer nobody has read yet; then active, compacting
+/// and idle. The widgets keep grouping strictly by state, which is why that order
+/// lives beside `SessionState.sortOrder` rather than inside it.
 ///
 /// Ties break on most recent activity, then on ascending session ID, so the choice
 /// is fully deterministic even when two sessions share a timestamp.
@@ -27,8 +29,8 @@ enum PetPresenter {
     /// the activity timestamp, which leaves the pet's pick undefined when two
     /// sessions tie. The state ordering still comes from the same source of truth.
     private static func hasHigherPriority(_ lhs: ClaudeSession, _ rhs: ClaudeSession) -> Bool {
-        if rank(lhs) != rank(rhs) {
-            return rank(lhs) < rank(rhs)
+        if lhs.attentionRank != rhs.attentionRank {
+            return lhs.attentionRank < rhs.attentionRank
         }
         if lhs.lastActivityAt != rhs.lastActivityAt {
             return lhs.lastActivityAt > rhs.lastActivityAt
@@ -36,14 +38,4 @@ enum PetPresenter {
         return lhs.sessionId < rhs.sessionId
     }
 
-    /// Where a session sits in the pet's queue.
-    ///
-    /// Unread slots between waiting and active: an answer nobody has read wants
-    /// the user more than a session that is busy working, and less than one that
-    /// has stopped and cannot go on until they reply.
-    private static func rank(_ session: ClaudeSession) -> Int {
-        if session.state == .waiting { return 0 }
-        if session.isUnread == true { return 1 }
-        return session.state.sortOrder + 1
-    }
 }

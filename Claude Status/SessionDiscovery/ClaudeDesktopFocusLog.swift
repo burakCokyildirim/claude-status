@@ -50,6 +50,16 @@ struct ClaudeDesktopFocusLog {
     }
 
     mutating func refresh() {
+        // A clear held from the last scan stands now unless this one reads a
+        // session ID over it. Switching sessions logs `null` and the new ID
+        // together, so that pair lands in a single read and the hold never
+        // shows; leaving for a plain chat logs `null` as the last word the app
+        // writes, sometimes for an hour, so waiting for another line to confirm
+        // it would leave the session it left marked as being read for ever.
+        if pendingClear {
+            pendingClear = false
+            focus = .noSession
+        }
         guard let url, let handle = try? FileHandle(forReadingFrom: url) else { return }
         defer { try? handle.close() }
 
@@ -79,10 +89,11 @@ struct ClaudeDesktopFocusLog {
         }
         guard let newest else { return }
 
-        // Switching sessions is logged as `null` and then the new ID, so a
-        // `null` is only believed once it is still the last word on the next
-        // scan. Acting on the gap would blink every session to unread.
-        if case .noSession = newest, case .session = focus, !pendingClear {
+        // Switching sessions is logged as `null` and then the new ID. Both land
+        // in one read, so the `null` is only ever seen alone when a scan falls
+        // between the two writes — held for that one scan rather than blinking
+        // the session to unread, and settled at the top of the next.
+        if case .noSession = newest, case .session = focus {
             pendingClear = true
             return
         }

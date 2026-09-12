@@ -11,7 +11,8 @@ struct PetPresenterTests {
     private func session(
         id: String,
         state: SessionState,
-        secondsAgo: TimeInterval = 0
+        secondsAgo: TimeInterval = 0,
+        isUnread: Bool? = nil
     ) -> ClaudeSession {
         ClaudeSession(
             sessionId: id,
@@ -25,8 +26,31 @@ struct PetPresenterTests {
             tmuxSocket: nil,
             source: .terminal(app: "Terminal"),
             activity: "",
-            sessionName: nil
+            sessionName: nil,
+            profileName: nil,
+            isUnread: isUnread
         )
+    }
+
+    /// A session blocked on the user outranks one that merely has something to
+    /// read: the first cannot go on at all until they answer.
+    @Test func waitingOutranksUnread() {
+        let waiting = session(id: "waiting", state: .waiting)
+        let unread = session(id: "unread", state: .idle, isUnread: true)
+
+        #expect(PetPresenter.resolve(from: [waiting, unread])?.sessionId == "waiting")
+        #expect(PetPresenter.resolve(from: [unread, waiting])?.sessionId == "waiting")
+    }
+
+    /// An answer nobody has read wants the user more than a session that is busy
+    /// working, or one with nothing to show at all.
+    @Test func unreadOutranksEveryStateBelowWaiting() {
+        let unread = session(id: "unread", state: .idle, isUnread: true)
+        for state in [SessionState.active, .compacting, .idle] {
+            let other = session(id: "other", state: state)
+            #expect(PetPresenter.resolve(from: [other, unread])?.sessionId == "unread")
+            #expect(PetPresenter.resolve(from: [unread, other])?.sessionId == "unread")
+        }
     }
 
     @Test func resolvesNilWithoutSessions() {

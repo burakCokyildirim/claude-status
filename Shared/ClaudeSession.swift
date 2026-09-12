@@ -164,6 +164,21 @@ struct ClaudeSession: Identifiable, Codable, Equatable {
     }
 }
 
+extension ClaudeSession {
+    /// Ordering for the surfaces that show unread — the pet and the popover.
+    ///
+    /// Unread sits between waiting and active: an answer nobody has read wants
+    /// the user more than a session busy working, and less than one that has
+    /// stopped and cannot go on until they reply. Kept apart from
+    /// `sortedByStateAndActivity`, which the widget uses and which groups
+    /// strictly by state.
+    var attentionRank: Int {
+        if state == .waiting { return 0 }
+        if isUnread == true { return 1 }
+        return state.sortOrder + 1
+    }
+}
+
 extension Array where Element == ClaudeSession {
     /// Sessions sorted by state (Waiting, Active, Compacting, Idle), then most recent first.
     var sortedByStateAndActivity: [ClaudeSession] {

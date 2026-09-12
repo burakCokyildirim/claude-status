@@ -37,6 +37,10 @@ struct PetViewTests {
     /// Pixel art drawn over a flat backdrop only ever produces palette colours;
     /// anti-aliased cell edges add blends of them.
     private func distinctColours(in image: CGImage) -> Int {
+        Set(pixels(of: image)).count
+    }
+
+    private func pixels(of image: CGImage) -> [UInt32] {
         let width = image.width
         let height = image.height
         var pixels = [UInt32](repeating: 0, count: width * height)
@@ -52,7 +56,19 @@ struct PetViewTests {
             )
             context?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         }
-        return Set(pixels).count
+        return pixels
+    }
+
+    /// Unread is drawn in its own colour rather than the state's: the point of
+    /// the signal is that it does not claim the session is blocked on the user.
+    @Test func anUnreadPetIsDrawnInItsOwnColour() throws {
+        let idle = try renderPet(.identity, state: .idle)
+        let unread = try renderPet(.identity, state: .idle, isUnread: true)
+
+        #expect(pixels(of: unread) != pixels(of: idle))
+        // And it stays pixel art: a colour arriving through a blend rather than
+        // the palette would show up as seams along every cell edge.
+        #expect(distinctColours(in: unread) <= Self.paletteColourCount)
     }
 
     @Test func restingSpriteUsesOnlyPaletteColours() throws {
