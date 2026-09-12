@@ -186,10 +186,13 @@ final class PetWindowController: NSObject {
         // The tick that feeds this fires every second whether or not anything
         // moved; without this the pet would rebuild its view once a second for
         // nothing, and would never be able to claim it is free when idle.
-        guard sessionChanged || sessions.count != sessionCount || !hasApplied else { return }
+        // Idle sessions are not what the badge is for: it says how many sessions
+        // are doing something behind the one the pet stands for.
+        let busyCount = sessions.count { $0.state != .idle }
+        guard sessionChanged || busyCount != sessionCount || !hasApplied else { return }
 
         session = resolved
-        sessionCount = sessions.count
+        sessionCount = busyCount
         restingAnimation = PetAnimation.resting(for: resolved?.state)
 
         if sessionChanged, hasApplied, resolved != nil {

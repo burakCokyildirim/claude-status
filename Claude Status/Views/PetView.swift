@@ -12,7 +12,9 @@ struct PetView: View {
     let state: SessionState?
     let transform: PetTransform
     let scale: CGFloat
-    /// Total live sessions, so the badge can say the pet is showing one of many.
+    /// Sessions that are doing something, so the badge can say the pet is
+    /// showing one of several. Idle sessions are left out: a machine can carry
+    /// dozens of them for days without any of them wanting attention.
     let sessionCount: Int
     /// The bubble's text, or `nil` when the bubble is hidden.
     let bubbleTitle: String?
