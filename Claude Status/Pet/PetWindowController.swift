@@ -234,6 +234,7 @@ final class PetWindowController: NSObject {
         PetView(
             character: PetCharacter.character(for: settings.character),
             state: session?.state,
+            isUnread: session?.isUnread == true,
             transform: currentTransform,
             scale: settings.size.scale,
             sessionCount: sessionCount,

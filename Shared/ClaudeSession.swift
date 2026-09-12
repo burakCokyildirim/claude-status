@@ -131,6 +131,11 @@ struct ClaudeSession: Identifiable, Codable, Equatable {
     /// Display name of the Claude Code profile (config dir) this session belongs to.
     /// Nil for data written before profile support.
     var profileName: String? = nil
+    /// Claude has spoken here since the user last had the session in front of
+    /// them. Its own signal rather than a state: unread says something is here
+    /// to read, while `waiting` says the session is blocked until the user
+    /// answers. Optional so data written before it still decodes.
+    var isUnread: Bool? = nil
 
     /// Use sessionId as the SwiftUI identity (stable, unlike PIDs).
     var id: String { sessionId }

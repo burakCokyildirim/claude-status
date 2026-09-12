@@ -7,12 +7,13 @@ struct ClaudeDesktopSession: Equatable {
     let sessionId: String
     /// Epoch milliseconds, the way the desktop app stores them.
     let lastActivityAt: Double
-    /// Stamped when the app brings the session up, not while it is being read.
-    let lastFocusedAt: Double
+    /// When the session was last opened in the app, or `nil` for the records
+    /// that carry no stamp at all.
+    let lastFocusedAt: Double?
 }
 
-/// Reads the Claude desktop app's session records: how Claude Status learns a
-/// desktop session's own ID, and whether its last answer has been seen.
+/// Reads the Claude desktop app's own bookkeeping: how Claude Status learns a
+/// desktop session's ID, and whether its last answer has been seen.
 ///
 /// The layout — `claude-code-sessions/<account>/<organization>/local_<id>.json`,
 /// tied to our sessions by `cliSessionId` — belongs to the desktop app, so every
@@ -21,7 +22,7 @@ struct ClaudeDesktopSessionStore {
 
     static let claudeDesktopBundleId = "com.anthropic.claudefordesktop"
 
-    /// Where our own "you have seen this" stamps live, in the App Group.
+    /// Where our own "you have seen this" marks live, in the App Group.
     static let seenKey = "claudeDesktopSeenAt"
 
     /// Both names the desktop app has used for its support directory.
@@ -46,6 +47,7 @@ struct ClaudeDesktopSessionStore {
 
     private var cache: [URL: (modified: Date, cliSessionId: String, session: ClaudeDesktopSession)] = [:]
     private var byCLISessionId: [String: ClaudeDesktopSession] = [:]
+    private var focusLog: ClaudeDesktopFocusLog
     /// Epoch milliseconds, keyed by our session ID: when the user was last
     /// watching that session.
     private var seenAt: [String: Double]
@@ -54,6 +56,7 @@ struct ClaudeDesktopSessionStore {
     init(
         roots: [URL] = ClaudeDesktopSessionStore.defaultRoots,
         defaults: UserDefaults? = AppGroup.defaults,
+        focusLog: ClaudeDesktopFocusLog = ClaudeDesktopFocusLog(),
         isDesktopAppInFront: @escaping @MainActor () -> Bool = {
             NSWorkspace.shared.frontmostApplication?.bundleIdentifier
                 == ClaudeDesktopSessionStore.claudeDesktopBundleId
@@ -61,6 +64,7 @@ struct ClaudeDesktopSessionStore {
     ) {
         self.roots = roots
         self.defaults = defaults
+        self.focusLog = focusLog
         self.isDesktopAppInFront = isDesktopAppInFront
         self.seenAt = Self.loadSeen(from: defaults)
     }
@@ -78,60 +82,70 @@ struct ClaudeDesktopSessionStore {
         var index: [String: ClaudeDesktopSession] = [:]
         for file in recordFiles() {
             let modified = modificationDate(of: file)
+            let entry: (modified: Date, cliSessionId: String, session: ClaudeDesktopSession)
             if let cached = cache[file], cached.modified == modified {
-                refreshed[file] = cached
-                index[cached.cliSessionId] = cached.session
+                entry = cached
+            } else if let record = Self.read(file) {
+                entry = (modified, record.cliSessionId, record.session)
+            } else {
                 continue
             }
-            guard let record = Self.read(file) else { continue }
-            refreshed[file] = (modified, record.cliSessionId, record.session)
-            index[record.cliSessionId] = record.session
+            refreshed[file] = entry
+            // The same session can be filed under two accounts, with the stale
+            // copy carrying an older answer; the newer record wins.
+            if let existing = index[entry.cliSessionId],
+               existing.lastActivityAt > entry.session.lastActivityAt {
+                continue
+            }
+            index[entry.cliSessionId] = entry.session
         }
         cache = refreshed
         byCLISessionId = index
+
+        focusLog.refresh()
         recordWhatIsBeingRead(now: now)
     }
 
-    /// The state to show for a session the hook reported as `hookState`.
+    /// Whether the desktop app has output here the user has not seen.
     ///
-    /// A desktop session that has spoken since the user last saw it is their
-    /// move, not idle: the hook writes idle whenever a turn ends without a
-    /// question, so an answer nobody has read looks exactly like a session
-    /// abandoned days ago.
-    func resolvedState(
-        hookState: SessionState,
+    /// The hook writes idle whenever a turn ends without a question, so an answer
+    /// waiting to be read looks exactly like a session abandoned days ago. This
+    /// separates the two, and deliberately does not touch the session's state:
+    /// unread is not the same claim as "blocked on you", which is what the hook's
+    /// own waiting state means.
+    ///
+    /// When Claude spoke comes from the hook's `.cstatus` timestamp, not from the
+    /// record's `lastActivityAt`: the desktop app throttles that field and can
+    /// leave it an hour behind, which would hold the answer back.
+    func isUnread(
         source: SessionSource,
-        cliSessionId: String
-    ) -> SessionState {
+        hookState: SessionState,
+        cliSessionId: String,
+        lastSpokeAt: Date
+    ) -> Bool {
         guard source == .claudeDesktop,
               hookState == .idle,
-              let session = byCLISessionId[cliSessionId],
-              session.lastActivityAt > lastSeen(cliSessionId) else {
-            return hookState
+              let record = byCLISessionId[cliSessionId],
+              let seen = lastSeen(cliSessionId, record: record) else {
+            return false
         }
-        return .waiting
+        return lastSpokeAt.timeIntervalSince1970 * 1000 > seen
     }
 
     // MARK: - Seen
 
-    /// Marks the session on screen as seen, so an answer the user watched land
+    /// Marks the session on screen as seen, so an answer the user watched arrive
     /// is not announced back to them the moment they look somewhere else.
     ///
-    /// The desktop app's own `lastFocusedAt` cannot carry this: it is stamped
-    /// when a session is brought up and then left alone, so a session being read
-    /// for an hour keeps an hour-old stamp while its activity climbs. This runs
-    /// on the scan the app already does, which is often enough — the answer the
-    /// user is watching arrives on a file change that triggers one.
-    ///
-    /// The app being in front is taken as reading the session it last focused.
-    /// Someone sitting on its settings screen is counted as reading too, which
-    /// costs a mark the user might have wanted and never raises a false one.
+    /// The app's own `lastFocusedAt` cannot carry this: it is stamped when a
+    /// session is opened and then left alone, so a session read for an hour keeps
+    /// an hour-old stamp while its activity climbs.
     private mutating func recordWhatIsBeingRead(now: Date) {
         var updated = seenAt
-        if isDesktopAppInFront(), let open = focusedCLISessionId() {
+        if isDesktopAppInFront(), let open = onScreenCLISessionId() {
             updated[open] = now.timeIntervalSince1970 * 1000
         }
-        // Sessions the app has dropped take their stamps with them — but only
+        // Sessions the app has dropped take their marks with them — but only
         // once it has listed some, so an unreadable directory cannot wipe them
         // and leave every session looking unread at once.
         if !byCLISessionId.isEmpty {
@@ -143,17 +157,39 @@ struct ClaudeDesktopSessionStore {
         defaults?.set(seenAt, forKey: Self.seenKey)
     }
 
-    /// The last point we can show the user saw the session: our own stamp from
-    /// while it was on screen, or the app's focus stamp, whichever is later.
-    private func lastSeen(_ cliSessionId: String) -> Double {
-        max(seenAt[cliSessionId] ?? 0, byCLISessionId[cliSessionId]?.lastFocusedAt ?? 0)
+    /// The session the app actually has on screen, as one of ours.
+    ///
+    /// The log is the only signal that can say "the app is up but showing
+    /// something else". Without it the best guess is the session opened most
+    /// recently, which cannot tell that apart and so keeps marking a session read
+    /// long after the user has moved on — hence the fallback is only for a log
+    /// that never spoke.
+    private func onScreenCLISessionId() -> String? {
+        switch focusLog.focus {
+        case .session(let desktopSessionId):
+            return byCLISessionId.first { $0.value.sessionId == desktopSessionId }?.key
+        case .noSession:
+            return nil
+        case .unknown:
+            return mostRecentlyOpenedCLISessionId()
+        }
     }
 
-    /// The session the app has up: the last one it focused.
-    private func focusedCLISessionId() -> String? {
+    /// The last point we can show the user saw the session: our own mark from
+    /// while it was on screen, or the app's stamp from when they opened it,
+    /// whichever is later.
+    ///
+    /// `nil` when neither exists. Some records carry no focus stamp at all, and
+    /// reading that as "never seen" would call every one of them unread.
+    private func lastSeen(_ cliSessionId: String, record: ClaudeDesktopSession) -> Double? {
+        [seenAt[cliSessionId], record.lastFocusedAt].compactMap { $0 }.max()
+    }
+
+    private func mostRecentlyOpenedCLISessionId() -> String? {
         // Ties break on the ID so the pick cannot flicker between two records.
         byCLISessionId
-            .max { ($0.value.lastFocusedAt, $1.key) < ($1.value.lastFocusedAt, $0.key) }?
+            .filter { $0.value.lastFocusedAt != nil }
+            .max { ($0.value.lastFocusedAt ?? 0, $1.key) < ($1.value.lastFocusedAt ?? 0, $0.key) }?
             .key
     }
 
@@ -193,7 +229,7 @@ struct ClaudeDesktopSessionStore {
         return (cliSessionId, ClaudeDesktopSession(
             sessionId: sessionId,
             lastActivityAt: (json["lastActivityAt"] as? NSNumber)?.doubleValue ?? 0,
-            lastFocusedAt: (json["lastFocusedAt"] as? NSNumber)?.doubleValue ?? 0
+            lastFocusedAt: (json["lastFocusedAt"] as? NSNumber)?.doubleValue
         ))
     }
 }

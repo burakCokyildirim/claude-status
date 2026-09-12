@@ -10,6 +10,10 @@ struct PetView: View {
 
     let character: PetCharacter
     let state: SessionState?
+    /// Claude has spoken here since the user last looked. Drawn as its own
+    /// colour rather than folded into `state`, because "there is something to
+    /// read" is a different claim from "this session is blocked on you".
+    let isUnread: Bool
     let transform: PetTransform
     let scale: CGFloat
     /// Sessions that are doing something, so the badge can say the pet is
@@ -33,7 +37,7 @@ struct PetView: View {
             if let bubbleTitle {
                 PetBubbleView(
                     title: bubbleTitle,
-                    stateLabel: state?.label ?? "No sessions",
+                    stateLabel: stateLabel,
                     accent: accentColor
                 )
                 // Room for the capsule's shadow when a long title fills the width.
@@ -112,10 +116,16 @@ struct PetView: View {
     private var spriteRect: CGRect { PetLayout.spriteRect(scale: scale) }
     private var bubbleRect: CGRect { PetLayout.bubbleRect(scale: scale) }
 
+    private var stateLabel: String {
+        guard let state else { return "No sessions" }
+        return isUnread ? "Unread" : state.label
+    }
+
     /// Mirrors the dot colours in `SessionRowView`, so the pet and the session
     /// list never disagree about what a state looks like.
     private var accentColor: Color {
         guard let state else { return .gray }
+        if isUnread { return SessionPalette.unread }
         switch state {
         case .active: return .green
         case .waiting: return .orange

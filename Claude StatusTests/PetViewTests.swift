@@ -10,12 +10,17 @@ struct PetViewTests {
     /// The backdrop plus the seven colours a waiting Nibble is drawn with.
     private static let paletteColourCount = 8
 
-    private func renderPet(_ transform: PetTransform) throws -> CGImage {
+    private func renderPet(
+        _ transform: PetTransform,
+        state: SessionState = .waiting,
+        isUnread: Bool = false
+    ) throws -> CGImage {
         let scale = PetSize.medium.scale
         let panel = PetLayout.panelSize(scale: scale)
         let view = PetView(
             character: PetCharacter.character(for: .nibble),
-            state: .waiting,
+            state: state,
+            isUnread: isUnread,
             transform: transform,
             scale: scale,
             sessionCount: 1,

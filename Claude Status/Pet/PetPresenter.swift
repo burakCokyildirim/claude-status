@@ -27,12 +27,23 @@ enum PetPresenter {
     /// the activity timestamp, which leaves the pet's pick undefined when two
     /// sessions tie. The state ordering still comes from the same source of truth.
     private static func hasHigherPriority(_ lhs: ClaudeSession, _ rhs: ClaudeSession) -> Bool {
-        if lhs.state.sortOrder != rhs.state.sortOrder {
-            return lhs.state.sortOrder < rhs.state.sortOrder
+        if rank(lhs) != rank(rhs) {
+            return rank(lhs) < rank(rhs)
         }
         if lhs.lastActivityAt != rhs.lastActivityAt {
             return lhs.lastActivityAt > rhs.lastActivityAt
         }
         return lhs.sessionId < rhs.sessionId
+    }
+
+    /// Where a session sits in the pet's queue.
+    ///
+    /// Unread slots between waiting and active: an answer nobody has read wants
+    /// the user more than a session that is busy working, and less than one that
+    /// has stopped and cannot go on until they reply.
+    private static func rank(_ session: ClaudeSession) -> Int {
+        if session.state == .waiting { return 0 }
+        if session.isUnread == true { return 1 }
+        return session.state.sortOrder + 1
     }
 }

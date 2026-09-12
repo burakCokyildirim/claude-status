@@ -185,10 +185,11 @@ struct SessionDiscovery {
     /// Builds a `ClaudeSession` from a validated `CStatusRecord`.
     private func assembleSession(from record: CStatusRecord, profileName: String?) -> ClaudeSession {
         let source = classifySource(pid: record.pid, ppid: record.ppid)
-        let state = desktopSessions.resolvedState(
-            hookState: record.state,
+        let isUnread = desktopSessions.isUnread(
             source: source,
-            cliSessionId: record.sessionId
+            hookState: record.state,
+            cliSessionId: record.sessionId,
+            lastSpokeAt: record.timestamp
         )
         let projectName = (record.cwd as NSString).lastPathComponent
 
@@ -224,7 +225,7 @@ struct SessionDiscovery {
             pid: record.pid,
             workingDirectory: record.cwd,
             projectName: projectName,
-            state: state,
+            state: record.state,
             lastActivityAt: record.timestamp,
             iTermSessionId: iTermSessionId,
             tmuxPaneId: tmuxPaneId,
@@ -232,7 +233,8 @@ struct SessionDiscovery {
             source: source,
             activity: record.activity,
             sessionName: record.sessionName,
-            profileName: profileName
+            profileName: profileName,
+            isUnread: isUnread
         )
     }
 
