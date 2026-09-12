@@ -65,6 +65,8 @@ Claude Status/                         # Main app target
     SessionMonitor.swift               # @Observable class: Darwin notifications + file watching + 5s polling
     StateResolver.swift                # DispatchSource file watchers (one per profile); JSONL timestamp fallback
     ITermFocuser.swift                 # Focuses host app (AppleScript for iTerm2, process activation for others)
+    ClaudeDesktopSessions.swift        # Claude desktop records: session IDs for deep links, and the unread test
+    ClaudeDesktopFocusLog.swift        # Which session the desktop app has on screen, from the app's own log
     ProductivityTracker.swift          # Time-in-state tracking, concurrency, score (persists to App Group)
     PluginDetector.swift               # Checks installed_plugins.json and settings.json for hook status
     PluginInstaller.swift              # Installs/uninstalls bundled plugin via `claude plugin` CLI
@@ -81,6 +83,7 @@ Claude Status/                         # Main app target
   Views/                               # SwiftUI views
     SessionListView.swift              # Popover: header, session list, empty state, Settings/Quit
     SessionRowView.swift               # Session row: status icon, project, source, activity, time
+    SessionPalette.swift               # Colours shared by the session list and the pet
     SettingsView.swift                 # Icon style, launch at login, plugin management, desktop pet
     ProductivityBarView.swift          # Visual productivity tracking bar
     PetView.swift                      # SwiftUI Canvas: sprite render, count badge
@@ -142,7 +145,7 @@ State is reported by the hook script in `.cstatus` files:
 | Compacting | broom | blue | Context compaction in progress |
 | Idle | sleep | gray | No recent activity |
 
-One state does not come from the hook: a Claude desktop session that has spoken since the user last saw it is shown as Waiting rather than Idle (`ClaudeDesktopSessions.swift`). The desktop app's own `lastFocusedAt` cannot answer that alone — it is stamped when a session is brought up, not while it is being read — so on each scan it already runs, Claude Status marks the session the desktop app has in front as seen, and keeps those marks in the App Group under `claudeDesktopSeenAt`.
+Sessions run by the Claude desktop app carry one signal the hook cannot give: **unread** — Claude has spoken since the user last had that session in front of them. It is a flag on `ClaudeSession`, not a `SessionState`, so it never makes the stronger claim `waiting` does (that the session is blocked until the user answers); the pet and the session list draw it in the same blue the desktop app uses for it. `ClaudeDesktopSessions.swift` decides it by comparing the hook's `.cstatus` timestamp against the last time the session was seen, and `ClaudeDesktopFocusLog.swift` supplies the hard part — which session the app currently has on screen — by reading the app's own `~/Library/Logs/Claude/main.log`, the only signal available without Screen Recording that tells reading a session apart from having the app up on a plain chat. Marks live in the App Group under `claudeDesktopSeenAt`.
 
 ### Host App Recognition
 
