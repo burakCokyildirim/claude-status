@@ -41,6 +41,15 @@ struct ClaudeDesktopTests {
         return (store, root)
     }
 
+    /// A session in the background that Claude has spoken in since it was last
+    /// looked at, plus the session on screen — the newest focus stamp of the two.
+    private func makeTwoSessionStore() throws -> (ClaudeDesktopSessionStore, URL) {
+        try makeStore([
+            Record(desktopId: "local_unread", cliId: "cli-unread", lastActivityAt: 3_000, lastFocusedAt: 2_000),
+            Record(desktopId: "local_open", cliId: "cli-open", lastActivityAt: 9_500, lastFocusedAt: 9_000)
+        ])
+    }
+
     @Test func findsTheDesktopRecordForAHookSession() throws {
         let (store, root) = try makeStore([
             Record(desktopId: "local_1111-aaaa", cliId: "cli-one"),
@@ -57,6 +66,7 @@ struct ClaudeDesktopTests {
         store.refresh(force: true)
 
         #expect(store.session(forCLISession: "cli-one") == nil)
+        #expect(store.resolvedState(hookState: .idle, source: .claudeDesktop, cliSessionId: "cli-one") == .idle)
     }
 
     /// Unread is the only thing separating a finished turn the user has seen from
@@ -72,18 +82,27 @@ struct ClaudeDesktopTests {
         #expect(store.session(forCLISession: "cli-unread")?.isUnread == true)
     }
 
-    @Test func anUnreadFinishedDesktopSessionIsTheUsersMove() {
-        let unread = ClaudeDesktopSession(sessionId: "local_x", lastActivityAt: 3_000, lastFocusedAt: 2_000)
-        let read = ClaudeDesktopSession(sessionId: "local_y", lastActivityAt: 1_000, lastFocusedAt: 2_000)
-        let resolve = ClaudeDesktopSessionStore.resolvedState
+    @Test func anUnreadFinishedDesktopSessionIsTheUsersMove() throws {
+        let (store, root) = try makeTwoSessionStore()
+        defer { try? FileManager.default.removeItem(at: root) }
 
-        #expect(resolve(.idle, .claudeDesktop, unread) == .waiting)
-        #expect(resolve(.idle, .claudeDesktop, read) == .idle)
-        #expect(resolve(.idle, .claudeDesktop, nil) == .idle)
-        // A session still working, or one running anywhere else, is left alone.
-        #expect(resolve(.active, .claudeDesktop, unread) == .active)
-        #expect(resolve(.compacting, .claudeDesktop, unread) == .compacting)
-        #expect(resolve(.idle, .terminal(app: "Terminal"), unread) == .idle)
+        #expect(store.resolvedState(hookState: .idle, source: .claudeDesktop, cliSessionId: "cli-unread") == .waiting)
+        // A session still working, one running anywhere else, and one the app
+        // has no record of all keep the state the hook reported.
+        #expect(store.resolvedState(hookState: .active, source: .claudeDesktop, cliSessionId: "cli-unread") == .active)
+        #expect(store.resolvedState(hookState: .compacting, source: .claudeDesktop, cliSessionId: "cli-unread") == .compacting)
+        #expect(store.resolvedState(hookState: .idle, source: .terminal(app: "Terminal"), cliSessionId: "cli-unread") == .idle)
+        #expect(store.resolvedState(hookState: .idle, source: .claudeDesktop, cliSessionId: "cli-none") == .idle)
+    }
+
+    /// The record of the session on screen says unread the whole time it is
+    /// open: its focus stamp is set once, while Claude keeps working in it.
+    @Test func theSessionInFrontIsNeverTheUsersMove() throws {
+        let (store, root) = try makeTwoSessionStore()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        #expect(store.session(forCLISession: "cli-open")?.isUnread == true)
+        #expect(store.resolvedState(hookState: .idle, source: .claudeDesktop, cliSessionId: "cli-open") == .idle)
     }
 
     /// The desktop app's link handler only accepts `local_` IDs, so anything

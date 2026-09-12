@@ -39,6 +39,9 @@ struct ClaudeDesktopSessionStore {
     private let roots: [URL]
     private var cache: [URL: (modified: Date, cliSessionId: String, session: ClaudeDesktopSession)] = [:]
     private var byCLISessionId: [String: ClaudeDesktopSession] = [:]
+    /// The session the app focused last — the one on screen, as near as these
+    /// records can say.
+    private var frontmostCLISessionId: String?
     private var lastScan: Date = .distantPast
 
     init(roots: [URL] = ClaudeDesktopSessionStore.defaultRoots) {
@@ -69,17 +72,32 @@ struct ClaudeDesktopSessionStore {
         }
         cache = refreshed
         byCLISessionId = index
+        // Ties break on the ID so the pick cannot flicker between two records.
+        frontmostCLISessionId = index
+            .max { ($0.value.lastFocusedAt, $1.key) < ($1.value.lastFocusedAt, $0.key) }?
+            .key
     }
 
-    /// A finished desktop session the user has not looked at since is their move,
-    /// not idle: the hook writes idle whenever a turn ends without a question, so
-    /// the unread mark is the only thing that separates the two.
-    static func resolvedState(
+    /// The state to show for a session the hook reported as `hookState`.
+    ///
+    /// A finished desktop session the user has not looked at since is their
+    /// move, not idle: the hook writes idle whenever a turn ends without a
+    /// question, so the unread mark is the only thing separating the two.
+    ///
+    /// The session in front is never counted unread, however loudly its record
+    /// says so. `lastFocusedAt` is stamped when the app brings a session up and
+    /// then left alone, while `lastActivityAt` keeps climbing as Claude works —
+    /// so the session being read right now reads as unread the whole time it is
+    /// open, which would put a "waiting" on the one session that plainly is not.
+    func resolvedState(
         hookState: SessionState,
         source: SessionSource,
-        desktop: ClaudeDesktopSession?
+        cliSessionId: String
     ) -> SessionState {
-        guard source == .claudeDesktop, hookState == .idle, desktop?.isUnread == true else {
+        guard source == .claudeDesktop,
+              hookState == .idle,
+              cliSessionId != frontmostCLISessionId,
+              session(forCLISession: cliSessionId)?.isUnread == true else {
             return hookState
         }
         return .waiting

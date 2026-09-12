@@ -142,7 +142,7 @@ State is reported by the hook script in `.cstatus` files:
 | Compacting | broom | blue | Context compaction in progress |
 | Idle | sleep | gray | No recent activity |
 
-One state does not come from the hook: a Claude desktop session that finished its turn and has not been looked at since is shown as Waiting rather than Idle, decided by `lastActivityAt` against `lastFocusedAt` in the desktop app's own session records (`ClaudeDesktopSessions.swift`).
+One state does not come from the hook: a Claude desktop session that finished its turn and has not been looked at since is shown as Waiting rather than Idle, decided by `lastActivityAt` against `lastFocusedAt` in the desktop app's own session records (`ClaudeDesktopSessions.swift`). The session the app focused last — the one on screen — is left out of that: its focus stamp is written once when the session comes up while its activity keeps climbing, so it reads as unread the whole time it is open.
 
 ### Host App Recognition
 

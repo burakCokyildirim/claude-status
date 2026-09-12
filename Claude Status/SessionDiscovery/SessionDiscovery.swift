@@ -185,10 +185,10 @@ struct SessionDiscovery {
     /// Builds a `ClaudeSession` from a validated `CStatusRecord`.
     private func assembleSession(from record: CStatusRecord, profileName: String?) -> ClaudeSession {
         let source = classifySource(pid: record.pid, ppid: record.ppid)
-        let state = ClaudeDesktopSessionStore.resolvedState(
+        let state = desktopSessions.resolvedState(
             hookState: record.state,
             source: source,
-            desktop: desktopSessions.session(forCLISession: record.sessionId)
+            cliSessionId: record.sessionId
         )
         let projectName = (record.cwd as NSString).lastPathComponent
 
