@@ -2,43 +2,88 @@ import Foundation
 import Testing
 @testable import Claude_Status
 
-/// Sessions run by the Claude desktop app: matching a hook's session ID to the
-/// desktop's own session, and the link that opens it.
+/// Sessions run by the Claude desktop app: reading its records, spotting the
+/// ones the user has not looked at, and the link that opens them.
 @MainActor
 struct ClaudeDesktopTests {
 
-    /// Lays out `<root>/<account>/<org>/local_<id>.json` the way the Claude
-    /// desktop app keeps its Claude Code sessions, under a throwaway root.
-    private func makeSessionsRoot(_ sessions: [(desktopId: String, cliId: String)]) throws -> URL {
+    private struct Record {
+        let desktopId: String
+        let cliId: String
+        var lastActivityAt: Double = 1_000
+        var lastFocusedAt: Double = 2_000
+    }
+
+    /// Lays out `<root>/<account>/<organization>/local_<id>.json` the way the
+    /// Claude desktop app keeps its Claude Code sessions, under a throwaway root.
+    private func makeSessionsRoot(_ records: [Record]) throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("claude-desktop-\(UUID().uuidString)")
         let organization = root.appendingPathComponent("account/organization")
         try FileManager.default.createDirectory(at: organization, withIntermediateDirectories: true)
-        for session in sessions {
-            let record: [String: Any] = ["sessionId": session.desktopId, "cliSessionId": session.cliId]
-            try JSONSerialization.data(withJSONObject: record)
-                .write(to: organization.appendingPathComponent("\(session.desktopId).json"))
+        for record in records {
+            let json: [String: Any] = [
+                "sessionId": record.desktopId,
+                "cliSessionId": record.cliId,
+                "lastActivityAt": record.lastActivityAt,
+                "lastFocusedAt": record.lastFocusedAt
+            ]
+            try JSONSerialization.data(withJSONObject: json)
+                .write(to: organization.appendingPathComponent("\(record.desktopId).json"))
         }
         return root
     }
 
-    @Test func findsTheDesktopSessionForAHookSession() throws {
-        let root = try makeSessionsRoot([
-            ("local_1111-aaaa", "cli-one"),
-            ("local_2222-bbbb", "cli-two")
+    private func makeStore(_ records: [Record]) throws -> (ClaudeDesktopSessionStore, URL) {
+        let root = try makeSessionsRoot(records)
+        var store = ClaudeDesktopSessionStore(roots: [root])
+        store.refresh(force: true)
+        return (store, root)
+    }
+
+    @Test func findsTheDesktopRecordForAHookSession() throws {
+        let (store, root) = try makeStore([
+            Record(desktopId: "local_1111-aaaa", cliId: "cli-one"),
+            Record(desktopId: "local_2222-bbbb", cliId: "cli-two")
         ])
         defer { try? FileManager.default.removeItem(at: root) }
 
-        #expect(SessionFocuser.claudeDesktopSessionId(forCLISession: "cli-two", in: [root]) == "local_2222-bbbb")
+        #expect(store.session(forCLISession: "cli-two")?.sessionId == "local_2222-bbbb")
+        #expect(store.session(forCLISession: "cli-nine") == nil)
     }
 
-    @Test func findsNothingWithoutAMatch() throws {
-        let root = try makeSessionsRoot([("local_1111-aaaa", "cli-one")])
+    @Test func survivesRootsThatAreNotThere() {
+        var store = ClaudeDesktopSessionStore(roots: [URL(fileURLWithPath: "/nope/claude-code-sessions")])
+        store.refresh(force: true)
+
+        #expect(store.session(forCLISession: "cli-one") == nil)
+    }
+
+    /// Unread is the only thing separating a finished turn the user has seen from
+    /// one that is waiting for them.
+    @Test func unreadMeansActivityAfterTheLastLook() throws {
+        let (store, root) = try makeStore([
+            Record(desktopId: "local_read", cliId: "cli-read", lastActivityAt: 1_000, lastFocusedAt: 2_000),
+            Record(desktopId: "local_unread", cliId: "cli-unread", lastActivityAt: 3_000, lastFocusedAt: 2_000)
+        ])
         defer { try? FileManager.default.removeItem(at: root) }
 
-        #expect(SessionFocuser.claudeDesktopSessionId(forCLISession: "cli-nine", in: [root]) == nil)
-        let missing = root.appendingPathComponent("missing")
-        #expect(SessionFocuser.claudeDesktopSessionId(forCLISession: "cli-one", in: [missing]) == nil)
+        #expect(store.session(forCLISession: "cli-read")?.isUnread == false)
+        #expect(store.session(forCLISession: "cli-unread")?.isUnread == true)
+    }
+
+    @Test func anUnreadFinishedDesktopSessionIsTheUsersMove() {
+        let unread = ClaudeDesktopSession(sessionId: "local_x", lastActivityAt: 3_000, lastFocusedAt: 2_000)
+        let read = ClaudeDesktopSession(sessionId: "local_y", lastActivityAt: 1_000, lastFocusedAt: 2_000)
+        let resolve = ClaudeDesktopSessionStore.resolvedState
+
+        #expect(resolve(.idle, .claudeDesktop, unread) == .waiting)
+        #expect(resolve(.idle, .claudeDesktop, read) == .idle)
+        #expect(resolve(.idle, .claudeDesktop, nil) == .idle)
+        // A session still working, or one running anywhere else, is left alone.
+        #expect(resolve(.active, .claudeDesktop, unread) == .active)
+        #expect(resolve(.compacting, .claudeDesktop, unread) == .compacting)
+        #expect(resolve(.idle, .terminal(app: "Terminal"), unread) == .idle)
     }
 
     /// The desktop app's link handler only accepts `local_` IDs, so anything

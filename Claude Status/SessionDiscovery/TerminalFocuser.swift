@@ -50,53 +50,17 @@ struct SessionFocuser {
 
     private static let claudeDesktopBundleId = "com.anthropic.claudefordesktop"
 
-    /// Where the Claude desktop app keeps one record per Claude Code session,
-    /// as `<account>/<organization>/local_<id>.json`.
-    static var claudeDesktopSessionRoots: [URL] {
-        guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return []
-        }
-        return ["Claude-V2", "Claude"].map {
-            support.appendingPathComponent($0).appendingPathComponent("claude-code-sessions")
-        }
-    }
-
-    /// Opens the session itself in the Claude desktop app, or at least brings the
-    /// app forward when the session cannot be matched.
+    /// Opens the session itself in the Claude desktop app, or at least brings
+    /// the app forward when the session cannot be matched.
     private func focusClaudeDesktop(cliSessionId: String) {
-        if let desktopId = Self.claudeDesktopSessionId(forCLISession: cliSessionId),
-           let url = Self.claudeDesktopURL(forDesktopSession: desktopId) {
+        var store = ClaudeDesktopSessionStore()
+        store.refresh(force: true)
+        if let desktop = store.session(forCLISession: cliSessionId),
+           let url = Self.claudeDesktopURL(forDesktopSession: desktop.sessionId) {
             NSWorkspace.shared.open(url)
         } else {
             activateApp(bundleId: Self.claudeDesktopBundleId)
         }
-    }
-
-    /// The desktop app's ID for the session the hook reports as `cliSessionId`.
-    /// Read only on a click: these records belong to the desktop app.
-    static func claudeDesktopSessionId(
-        forCLISession cliSessionId: String,
-        in roots: [URL] = claudeDesktopSessionRoots
-    ) -> String? {
-        let fileManager = FileManager.default
-        let needle = Data(cliSessionId.utf8)
-        func children(of url: URL) -> [URL] {
-            (try? fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
-        }
-        for account in roots.flatMap(children) {
-            for organization in children(of: account) {
-                for record in children(of: organization)
-                where record.lastPathComponent.hasPrefix("local_") && record.pathExtension == "json" {
-                    // A byte search first: nearly every record is for another session.
-                    guard let data = try? Data(contentsOf: record),
-                          data.range(of: needle) != nil,
-                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                          json["cliSessionId"] as? String == cliSessionId else { continue }
-                    return json["sessionId"] as? String
-                }
-            }
-        }
-        return nil
     }
 
     /// The desktop app's link to an existing Claude Code session. Its handler
