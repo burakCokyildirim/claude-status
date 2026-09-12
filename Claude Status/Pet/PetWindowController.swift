@@ -179,6 +179,7 @@ final class PetWindowController: NSObject {
     /// Called from the status item's existing one-second tick rather than a timer
     /// of its own, so an enabled pet adds no polling to the app.
     func apply(sessions: [ClaudeSession]) {
+        syncHitPanel()
         let resolved = PetPresenter.resolve(from: sessions)
         let sessionChanged = resolved?.id != session?.id || resolved?.state != session?.state
 
@@ -500,6 +501,22 @@ final class PetWindowController: NSObject {
         let scale = settings.size.scale
         let origin = PetLayout.petOrigin(forPanelOrigin: panel.frame.origin, scale: scale)
         return NSRect(origin: origin, size: PetLayout.petSize(scale: scale))
+    }
+
+    /// Keeps the hit panel attached to the panel and over the sprite.
+    ///
+    /// The window server can drop a child window — after the display sleeps, for
+    /// one — which leaves the pet drawn but unclickable, because the panel it is
+    /// drawn in lets every click through. Re-asserting it costs a frame compare,
+    /// so it rides the tick rather than waiting for the session to change.
+    private func syncHitPanel() {
+        guard let panel, let hitPanel, panel.isVisible else { return }
+        if let sprite = interactiveScreenRect, hitPanel.frame != sprite {
+            hitPanel.setFrame(sprite, display: false)
+        }
+        if hitPanel.parent !== panel || !hitPanel.isVisible {
+            panel.addChildWindow(hitPanel, ordered: .above)
+        }
     }
 
     /// Moves the pet box so its origin sits at `origin` in screen coordinates.
