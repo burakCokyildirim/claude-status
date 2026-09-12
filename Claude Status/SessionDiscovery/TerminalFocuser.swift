@@ -18,6 +18,8 @@ struct SessionFocuser {
         
         case .zed:
             activateApp(bundleId: "dev.zed.Zed")
+        case .claudeDesktop:
+            focusClaudeDesktop(cliSessionId: session.sessionId)
         }
     }
 
@@ -42,6 +44,39 @@ struct SessionFocuser {
             return bundleId.hasPrefix("com.jetbrains.")
         }
         jetbrainsApp?.activate()
+    }
+
+    // MARK: - Claude Desktop
+
+    /// Opens the session itself in the Claude desktop app, or at least brings
+    /// the app forward when the session cannot be matched.
+    private func focusClaudeDesktop(cliSessionId: String) {
+        var store = ClaudeDesktopSessionStore()
+        store.refresh(force: true)
+        if let desktop = store.session(forCLISession: cliSessionId),
+           let url = Self.claudeDesktopURL(forDesktopSession: desktop.sessionId) {
+            NSWorkspace.shared.open(url)
+        } else {
+            activateApp(bundleId: ClaudeDesktopSessionStore.claudeDesktopBundleId)
+        }
+    }
+
+    /// The desktop app's link to an existing Claude Code session. Its handler
+    /// accepts only `local_` IDs, so anything else is refused, not passed along.
+    static func claudeDesktopURL(forDesktopSession desktopSessionId: String) -> URL? {
+        let prefix = "local_"
+        let suffix = desktopSessionId.dropFirst(prefix.count)
+        guard desktopSessionId.hasPrefix(prefix),
+              (1...64).contains(suffix.count),
+              suffix.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }) else {
+            return nil
+        }
+        var components = URLComponents()
+        components.scheme = "claude"
+        components.host = "code"
+        components.path = "/continue"
+        components.queryItems = [URLQueryItem(name: "session", value: desktopSessionId)]
+        return components.url
     }
 
     // MARK: - Terminal

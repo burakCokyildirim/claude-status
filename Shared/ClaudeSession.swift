@@ -82,6 +82,7 @@ enum SessionSource: Codable, Equatable {
     case vscode
     case jetbrains(ide: String)  // e.g. "PyCharm", "IntelliJ IDEA"
     case zed
+    case claudeDesktop  // Claude Code in the Claude desktop app
 
     var label: String {
         switch self {
@@ -90,6 +91,7 @@ enum SessionSource: Codable, Equatable {
         case .vscode: "VS Code"
         case .jetbrains(let ide): ide
         case .zed: "Zed"
+        case .claudeDesktop: "Claude"
         }
     }
 
@@ -129,6 +131,11 @@ struct ClaudeSession: Identifiable, Codable, Equatable {
     /// Display name of the Claude Code profile (config dir) this session belongs to.
     /// Nil for data written before profile support.
     var profileName: String? = nil
+    /// Claude has spoken here since the user last had the session in front of
+    /// them. Its own signal rather than a state: unread says something is here
+    /// to read, while `waiting` says the session is blocked until the user
+    /// answers. Optional so data written before it still decodes.
+    var isUnread: Bool? = nil
 
     /// Use sessionId as the SwiftUI identity (stable, unlike PIDs).
     var id: String { sessionId }
@@ -154,6 +161,21 @@ struct ClaudeSession: Identifiable, Codable, Equatable {
         components.host = "session"
         components.path = "/\(id)"
         return components.url ?? URL(string: "claude-status://session/unknown")!
+    }
+}
+
+extension ClaudeSession {
+    /// Ordering for the surfaces that show unread — the pet and the popover.
+    ///
+    /// Unread sits between waiting and active: an answer nobody has read wants
+    /// the user more than a session busy working, and less than one that has
+    /// stopped and cannot go on until they reply. Kept apart from
+    /// `sortedByStateAndActivity`, which the widget uses and which groups
+    /// strictly by state.
+    var attentionRank: Int {
+        if state == .waiting { return 0 }
+        if isUnread == true { return 1 }
+        return state.sortOrder + 1
     }
 }
 

@@ -18,8 +18,14 @@ struct SessionListView: View {
 
     private let menuFont = Font.system(size: 13)
 
+    /// Ordered the way the pet ranks them, so the row it stands for is the one
+    /// at the top of this list rather than buried among the idle sessions.
     private var sortedSessions: [ClaudeSession] {
-        sessions.sortedByStateAndActivity
+        sessions.sorted {
+            $0.attentionRank != $1.attentionRank
+                ? $0.attentionRank < $1.attentionRank
+                : $0.lastActivityAt > $1.lastActivityAt
+        }
     }
 
     /// Max height for session list: 80% of screen height minus chrome.

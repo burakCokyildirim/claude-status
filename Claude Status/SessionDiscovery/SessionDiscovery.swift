@@ -25,6 +25,9 @@ struct SessionDiscovery {
     /// Keyed by session ID (UUID string from the .cstatus filename).
     var deadSessions: Set<String> = []
 
+    /// The Claude desktop app's own records, for the sessions it runs.
+    private var desktopSessions = ClaudeDesktopSessionStore()
+
     // MARK: - Discovery
 
     /// Result of a discovery pass: sessions plus their .cstatus file locations.
@@ -36,6 +39,7 @@ struct SessionDiscovery {
     /// Full scan across all given profiles: find all .cstatus files, validate PIDs,
     /// classify sources. Updates `deadSessions` for any that are gone.
     mutating func discoverAll(profiles: [ClaudeProfile]) -> DiscoveryResult {
+        desktopSessions.refresh()
         var sessions: [ClaudeSession] = []
         var cstatusFiles: [String: URL] = [:]
 
@@ -58,6 +62,7 @@ struct SessionDiscovery {
     /// Fast refresh: re-read only .cstatus files (no directory enumeration needed
     /// if we already have cached paths). Falls back to full scan.
     mutating func refreshFromCache(_ cache: [String: URL], profiles: [ClaudeProfile]) -> DiscoveryResult {
+        desktopSessions.refresh()
         var sessions: [ClaudeSession] = []
         var cstatusFiles: [String: URL] = [:]
 
@@ -180,6 +185,12 @@ struct SessionDiscovery {
     /// Builds a `ClaudeSession` from a validated `CStatusRecord`.
     private func assembleSession(from record: CStatusRecord, profileName: String?) -> ClaudeSession {
         let source = classifySource(pid: record.pid, ppid: record.ppid)
+        let isUnread = desktopSessions.isUnread(
+            source: source,
+            hookState: record.state,
+            cliSessionId: record.sessionId,
+            lastSpokeAt: record.timestamp
+        )
         let projectName = (record.cwd as NSString).lastPathComponent
 
         let iTermSessionId: String?
@@ -222,7 +233,8 @@ struct SessionDiscovery {
             source: source,
             activity: record.activity,
             sessionName: record.sessionName,
-            profileName: profileName
+            profileName: profileName,
+            isUnread: isUnread
         )
     }
 
@@ -251,6 +263,12 @@ struct SessionDiscovery {
             if path.contains(".vscode/extensions/anthropic.claude-code") {
                 return .vscode
             }
+        }
+
+        // The Claude desktop app marks the sessions it runs. Checked on the
+        // process itself: the ppid the hook reports does not lead back to the app.
+        if readEnvironmentVariable(for: pid, name: "CLAUDE_CODE_ENTRYPOINT") == "claude-desktop" {
+            return .claudeDesktop
         }
 
         // Check environment variables on the Claude process
