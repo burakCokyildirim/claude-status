@@ -57,6 +57,9 @@ final class PetWindowController: NSObject {
     /// Bumped on every screen-parameter notification so superseded and
     /// post-teardown re-clamps drop out.
     private var screenChangeGeneration = 0
+    /// How many displays there were when the pet was last placed, to tell a
+    /// monitor being plugged into a one-display Mac from any other change.
+    private var settledDisplayCount = 0
 
     init(
         settings: PetSettings,
@@ -354,25 +357,39 @@ final class PetWindowController: NSObject {
         }
     }
 
-    /// Brings the pet back into a visible working area.
+    /// Brings the pet back into a working area.
     ///
-    /// Deliberately does not save: if a re-clamp overwrote the stored position,
-    /// unplugging an external display would permanently destroy where the user
-    /// had put the pet on it. Leaving it alone means replugging restores it.
+    /// A monitor plugged into a Mac that had one display takes the pet to the
+    /// main display, in the corner it was left in, and saves that so the next
+    /// change does not pull it back. Anything else deliberately does not save: if
+    /// a re-clamp overwrote the stored position, unplugging an external display
+    /// would permanently destroy where the user had put the pet on it.
     private func reclampIntoVisibleArea() {
         guard panel != nil, let rect = petScreenRect else { return }
         let screens = Self.currentScreens()
+        let previousDisplayCount = settledDisplayCount
+        settledDisplayCount = screens.count
 
-        if let stored = PetSettings.savedPosition(),
-           let screen = PetPlacement.resolveScreen(for: stored, among: screens) {
-            movePet(to: PetPlacement.origin(for: stored, in: screen.visibleFrame, petSize: rect.size))
+        if PetPlacement.movesToMainDisplay(fromDisplayCount: previousDisplayCount, to: screens.count),
+           let main = screens.first {
+            let origin = PetPlacement.originOnMainDisplay(
+                main, stored: PetSettings.savedPosition(), petSize: rect.size
+            )
+            movePet(to: origin)
+            PetSettings.savePosition(PetPosition(petOrigin: origin, petSize: rect.size, screen: main))
             return
         }
 
-        let visible = Self.screen(holding: rect, among: screens)?.visibleFrame
-            ?? NSScreen.main?.visibleFrame
+        if let stored = PetSettings.savedPosition(),
+           let screen = PetPlacement.resolveScreen(for: stored, among: screens) {
+            movePet(to: PetPlacement.origin(for: stored, in: screen.workingArea, petSize: rect.size))
+            return
+        }
+
+        let area = Self.screen(holding: rect, among: screens)?.workingArea
+            ?? screens.first?.workingArea
             ?? .zero
-        movePet(to: PetPlacement.clamp(rect.origin, in: visible, petSize: rect.size))
+        movePet(to: PetPlacement.clamp(rect.origin, in: area, petSize: rect.size))
     }
 
     private func reduceMotionDidChange() {
@@ -407,8 +424,9 @@ final class PetWindowController: NSObject {
         render()
     }
 
-    /// Persists where the pet was dropped. This is the only place a position is
-    /// written: re-clamping after a display change must never overwrite it.
+    /// Persists where the pet was dropped. Apart from a monitor being plugged into
+    /// a one-display Mac, this is the only place a position is written:
+    /// re-clamping after any other display change must never overwrite it.
     func dragDidEnd() {
         isDragging = false
         defer { render() }
@@ -416,7 +434,7 @@ final class PetWindowController: NSObject {
         guard let rect = petScreenRect,
               let screen = Self.screen(holding: rect, among: Self.currentScreens()) else { return }
 
-        let clamped = PetPlacement.clamp(rect.origin, in: screen.visibleFrame, petSize: rect.size)
+        let clamped = PetPlacement.clamp(rect.origin, in: screen.workingArea, petSize: rect.size)
         movePet(to: clamped)
         PetSettings.savePosition(
             PetPosition(petOrigin: clamped, petSize: rect.size, screen: screen)
@@ -472,8 +490,8 @@ final class PetWindowController: NSObject {
     @objc private func resetPosition() {
         PetSettings.clearPosition()
         let petSize = PetLayout.petSize(scale: settings.size.scale)
-        let visible = NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
-        movePet(to: PetPlacement.defaultOrigin(in: visible, petSize: petSize))
+        let area = Self.currentScreens().first?.workingArea ?? .zero
+        movePet(to: PetPlacement.defaultOrigin(in: area, petSize: petSize))
     }
 
     // MARK: - Placement
@@ -497,7 +515,7 @@ final class PetWindowController: NSObject {
     /// attributed to the screen the pet actually landed on.
     private static func screen(holding rect: NSRect, among screens: [PetScreen]) -> PetScreen? {
         let best = screens.max { lhs, rhs in
-            overlap(rect, lhs.visibleFrame) < overlap(rect, rhs.visibleFrame)
+            overlap(rect, lhs.workingArea) < overlap(rect, rhs.workingArea)
         }
         return best ?? screens.first
     }
@@ -543,22 +561,25 @@ final class PetWindowController: NSObject {
         let scale = settings.size.scale
         let petSize = PetLayout.petSize(scale: scale)
         let screens = Self.currentScreens()
+        settledDisplayCount = screens.count
 
         guard let stored = PetSettings.savedPosition() else {
-            let visible = NSScreen.main?.visibleFrame ?? screens.first?.visibleFrame ?? .zero
-            movePet(to: PetPlacement.defaultOrigin(in: visible, petSize: petSize))
+            let area = screens.first?.workingArea ?? .zero
+            movePet(to: PetPlacement.defaultOrigin(in: area, petSize: petSize))
             return
         }
 
         // A stored display that is gone falls back to the main screen, which puts
         // the pet in the equivalent corner rather than nowhere.
-        let visible = PetPlacement.resolveScreen(for: stored, among: screens)?.visibleFrame
-            ?? NSScreen.main?.visibleFrame
+        let area = PetPlacement.resolveScreen(for: stored, among: screens)?.workingArea
+            ?? screens.first?.workingArea
             ?? .zero
-        movePet(to: PetPlacement.origin(for: stored, in: visible, petSize: petSize))
+        movePet(to: PetPlacement.origin(for: stored, in: area, petSize: petSize))
     }
 
-    /// The attached displays, reduced to what placement needs.
+    /// The attached displays, reduced to what placement needs. The first is the
+    /// main display — the one System Settings says holds the menu bar — which
+    /// `NSScreen.main` is not: that is whichever screen has the key window.
     static func currentScreens() -> [PetScreen] {
         NSScreen.screens.map { screen in
             let displayID = (screen.deviceDescription[
@@ -568,7 +589,7 @@ final class PetWindowController: NSObject {
                 displayUUID: displayUUID(for: displayID),
                 displayID: displayID,
                 name: screen.localizedName,
-                visibleFrame: screen.visibleFrame
+                workingArea: PetPlacement.workingArea(frame: screen.frame, visibleFrame: screen.visibleFrame)
             )
         }
     }
