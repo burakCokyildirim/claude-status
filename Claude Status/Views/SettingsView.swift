@@ -17,7 +17,7 @@ struct SettingsView: View {
     @AppStorage(PetSettings.Keys.enabled, store: AppGroup.defaults)
     private var petEnabled: Bool = false
     @AppStorage(PetSettings.Keys.character, store: AppGroup.defaults)
-    private var petCharacter: PetCharacterID = .nibble
+    private var petCharacter: PetCharacterID = .claudie
     @AppStorage(PetSettings.Keys.size, store: AppGroup.defaults)
     private var petSize: PetSize = .medium
     @AppStorage(PetSettings.Keys.bubbleMode, store: AppGroup.defaults)

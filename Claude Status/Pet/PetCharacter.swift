@@ -1,290 +1,222 @@
 import SwiftUI
 
-/// The colours a character is drawn with.
-///
-/// Fixed rather than theme-derived: the pet floats over arbitrary wallpapers, so
-/// it carries its own contrast instead of borrowing the system appearance.
-nonisolated struct PetPalette {
-    let outline: Color
-    let body: Color
-    let highlight: Color
-    let shade: Color
-    let eye: Color
-    let eyeHighlight: Color
+/// A piece of pixel art: rows of palette keys, with `.` transparent.
+nonisolated struct PetPart: ExpressibleByArrayLiteral {
+
+    let rows: [String]
+
+    init(arrayLiteral rows: String...) {
+        self.rows = rows
+    }
+
+    /// This part with its top-left corner at column `x`, row `y` of the canvas.
+    func at(_ x: Int, _ y: Int) -> PetLayer {
+        PetLayer(part: self, x: x, y: y)
+    }
 }
 
-/// A pet character: a palette plus its pixel art.
+/// A part placed on the canvas.
+nonisolated struct PetLayer {
+    let part: PetPart
+    let x: Int
+    let y: Int
+}
+
+/// One drawing of the pet, and how long it stays up.
 ///
-/// The body is a single pose. Everything that moves — bobbing, swaying, squash
-/// and stretch, hops — comes from `PetMotion` and is applied to the whole
-/// sprite. Hand-authoring a frame per animation would multiply this file by an
-/// order of magnitude to produce what the transform layer already gives.
+/// Composed once, when its character is first used, so showing a frame is only
+/// ever a walk over finished rows.
+nonisolated struct PetFrame: Equatable {
+
+    let duration: TimeInterval
+
+    /// `PetLayout.gridHeight` rows of `PetLayout.gridWidth` palette keys.
+    let rows: [String]
+
+    /// Stacks `layers` bottom first. A layer's `.` lets whatever is beneath show
+    /// through, and anything that falls off the canvas is cut away.
+    init(_ milliseconds: Int, _ layers: PetLayer...) {
+        var grid = Array(
+            repeating: Array(repeating: Character("."), count: PetLayout.gridWidth),
+            count: PetLayout.gridHeight
+        )
+        for layer in layers {
+            for (rowOffset, line) in layer.part.rows.enumerated() {
+                let row = layer.y + rowOffset
+                guard grid.indices.contains(row) else { continue }
+                for (columnOffset, key) in line.enumerated() where key != "." {
+                    let column = layer.x + columnOffset
+                    guard grid[row].indices.contains(column) else { continue }
+                    grid[row][column] = key
+                }
+            }
+        }
+        duration = TimeInterval(milliseconds) / 1000
+        rows = grid.map { String($0) }
+    }
+}
+
+/// What the pet is acting out.
+///
+/// Unread is a mood of its own although it is not a `SessionState`: the hook
+/// reports those sessions idle, but a pet that has something to tell you should
+/// not look like it has dozed off. It ranks where `attentionRank` puts it, below
+/// waiting.
+nonisolated enum PetMood: CaseIterable {
+    case active
+    case waiting
+    case unread
+    case compacting
+    case idle
+    /// No session to stand for, while the pet stays out anyway.
+    case resting
+
+    init(state: SessionState?, isUnread: Bool) {
+        guard let state else {
+            self = .resting
+            return
+        }
+        switch state {
+        case .waiting: self = .waiting
+        case _ where isUnread: self = .unread
+        case .active: self = .active
+        case .compacting: self = .compacting
+        case .idle: self = .idle
+        }
+    }
+}
+
+/// How a character acts out one mood.
+nonisolated struct PetRoutine {
+
+    /// Played once on the way into the mood.
+    let enter: [PetFrame]?
+    let loop: [PetFrame]
+    /// Played once on the way out of it.
+    let exit: [PetFrame]?
+    /// The loop frame drawn when motion is reduced: the one that says the most
+    /// on its own.
+    let still: Int
+
+    init(enter: [PetFrame]? = nil, loop: [PetFrame], exit: [PetFrame]? = nil, still: Int = 0) {
+        self.enter = enter
+        self.loop = loop
+        self.exit = exit
+        self.still = still
+    }
+}
+
+/// A pet character: a palette, and a routine for every mood.
+///
+/// Every motion is drawn, frame by frame, on a canvas of `PetLayout.gridWidth` by
+/// `PetLayout.gridHeight` cells, with the feet on the bottom row. The drawings
+/// live one character per file under `Characters/`, built from parts placed on
+/// that canvas, so a pose is drawn once however many frames use it.
 nonisolated struct PetCharacter {
 
-    let palette: PetPalette
+    let active: PetRoutine
+    let waiting: PetRoutine
+    let unread: PetRoutine
+    let compacting: PetRoutine
+    let idle: PetRoutine
+    let resting: PetRoutine
 
-    /// The resting body: `PetLayout.gridHeight` rows of `PetLayout.gridWidth`
-    /// characters. `.` is transparent, everything else indexes the palette.
-    let body: [String]
+    /// Fixed rather than theme-derived: the pet floats over arbitrary wallpapers,
+    /// so it carries its own contrast instead of borrowing the system appearance.
+    private let palette: [Character: Color]
 
-    /// Rows that differ while the pet is off the ground, keyed by row index.
-    /// Only the legs tuck up, so this stays a handful of lines per character.
-    let airborneRows: [Int: String]
+    init(
+        palette: [Character: UInt32],
+        active: PetRoutine,
+        waiting: PetRoutine,
+        unread: PetRoutine,
+        compacting: PetRoutine,
+        idle: PetRoutine,
+        resting: PetRoutine
+    ) {
+        self.palette = palette.mapValues { rgb in
+            Color(
+                red: Double(rgb >> 16 & 0xFF) / 255,
+                green: Double(rgb >> 8 & 0xFF) / 255,
+                blue: Double(rgb & 0xFF) / 255
+            )
+        }
+        self.active = active
+        self.waiting = waiting
+        self.unread = unread
+        self.compacting = compacting
+        self.idle = idle
+        self.resting = resting
+    }
 
     static func character(for id: PetCharacterID) -> PetCharacter {
         switch id {
+        case .claudie: claudie
         case .nibble: nibble
-        case .lint: lint
+        case .quack: quack
         case .kernel: kernel
         }
     }
 
-    /// The finished sprite for a session state: body, then face, then accent mark.
-    func sprite(for state: SessionState, airborne: Bool) -> [String] {
-        var rows = body
-        if airborne {
-            for (index, replacement) in airborneRows where rows.indices.contains(index) {
-                rows[index] = replacement
-            }
-        }
-        overlay(PetFace.rows(for: state), onto: &rows, startingAt: PetFace.rowOffset)
-        overlay(PetFace.mark(for: state), onto: &rows, startingAt: 0)
-        return rows
-    }
-
-    /// The colour a sprite character maps to, or `nil` where it is transparent.
-    func color(for pixel: Character, accent: Color) -> Color? {
-        switch pixel {
-        case "o": palette.outline
-        case "b": palette.body
-        case "h": palette.highlight
-        case "s": palette.shade
-        case "E": palette.eye
-        case "w": palette.eyeHighlight
-        case "a": accent
-        default: nil
+    func routine(for mood: PetMood) -> PetRoutine {
+        switch mood {
+        case .active: active
+        case .waiting: waiting
+        case .unread: unread
+        case .compacting: compacting
+        case .idle: idle
+        case .resting: resting
         }
     }
 
-    private func overlay(_ source: [String], onto rows: inout [String], startingAt offset: Int) {
-        for (index, line) in source.enumerated() {
-            let target = offset + index
-            guard rows.indices.contains(target) else { continue }
-            rows[target] = String(zip(line, rows[target]).map { $0 == "." ? $1 : $0 })
-        }
+    /// The single frame drawn for `mood` when motion is reduced.
+    func still(for mood: PetMood) -> PetFrame {
+        let routine = routine(for: mood)
+        return routine.loop[routine.still]
+    }
+
+    /// The colour a palette key maps to, or `nil` where the pet is transparent.
+    func color(for key: Character) -> Color? {
+        palette[key]
     }
 }
 
-// MARK: - Faces
+// MARK: - Props
 
-/// Face and accent overlays, shared by every character: all three heads present
-/// the same face area, so the expressions are authored once.
-nonisolated enum PetFace {
+/// The props every character shares, so a sleeping pet snores the same "z"
+/// whoever it is.
+nonisolated enum PetProp {
 
-    /// The grid row the face overlay starts on.
-    static let rowOffset = 7
+    /// A "z", drifting up while it sleeps.
+    static let snore: PetPart = [
+        "wwww",
+        "..w.",
+        ".w..",
+        "wwww",
+    ]
 
-    static func rows(for state: SessionState) -> [String] {
-        switch state {
-        // Narrow, focused slits.
-        case .active: [
-            "................",
-            "................",
-            "....EE....EE....",
-            "................",
-            "................",
-            ".......EE......."
-        ]
-        // Wide open with a highlight, and an open mouth.
-        case .waiting: [
-            "....EEE..EEE....",
-            "....EwE..EwE....",
-            "....EEE..EEE....",
-            "................",
-            "................",
-            "......EEEE......"
-        ]
-        // Shut tight.
-        case .compacting: [
-            "................",
-            "................",
-            "...EEEE..EEEE...",
-            "................",
-            "................",
-            "......EEEE......"
-        ]
-        // Half closed and sitting low, so it reads as drowsy rather than shut.
-        case .idle: [
-            "................",
-            "................",
-            "................",
-            "...EEEE..EEEE...",
-            "................",
-            "................"
-        ]
-        }
-    }
+    /// A speech bubble holding "...": there is something to read.
+    static let bubble: PetPart = [
+        ".wwwww.",
+        "wwwwwww",
+        "wewewew",
+        "wwwwwww",
+        ".ww....",
+    ]
 
-    /// A mark drawn above the head in the session's state colour. At small sizes
-    /// this carries most of the at-a-glance read, where eye shape alone is subtle.
-    static func mark(for state: SessionState) -> [String] {
-        switch state {
-        // Motion ticks either side of the head.
-        case .active: [
-            "................",
-            "....a......a....",
-            "...aa......aa..."
-        ]
-        // An exclamation mark.
-        case .waiting: [
-            ".......aa.......",
-            ".......aa.......",
-            ".......aa......."
-        ]
-        // Dust being swept up.
-        case .compacting: [
-            "................",
-            "....a...a...a...",
-            "................"
-        ]
-        // A "z".
-        case .idle: [
-            "......aaa.......",
-            ".......a........",
-            "......aaa......."
-        ]
-        }
-    }
-}
+    /// A puff of dust, kicked up while it squeezes.
+    static let dust: PetPart = [
+        ".w.",
+        "w.w",
+    ]
 
-// MARK: - Characters
-
-nonisolated extension PetCharacter {
-
-    /// A tidy little shell bot with a wedge bitten out of the top of its dome.
-    static let nibble = PetCharacter(
-        palette: PetPalette(
-            outline: Color(red: 0.11, green: 0.13, blue: 0.18),
-            body: Color(red: 0.42, green: 0.55, blue: 0.75),
-            highlight: Color(red: 0.62, green: 0.74, blue: 0.90),
-            shade: Color(red: 0.30, green: 0.40, blue: 0.58),
-            eye: Color(red: 0.08, green: 0.09, blue: 0.12),
-            eyeHighlight: .white
-        ),
-        body: [
-            "................",
-            "................",
-            "................",
-            ".....oooo.oo....",
-            "...oohhhhoohho..",
-            "..ohhhhhhhhhho..",
-            ".ohhhhhhhhhhhho.",
-            ".obbbbbbbbbbbbo.",
-            "obbbbbbbbbbbbbbo",
-            "obbbbbbbbbbbbbbo",
-            "obbbbbbbbbbbbbbo",
-            "obbbbbbbbbbbbbbo",
-            "obbbbbbbbbbbbbbo",
-            ".obbbbbbbbbbbbo.",
-            "..oobbbbbbbboo..",
-            "...oobbbbbboo...",
-            "..obbbbssbbbbo..",
-            "..obbbbssbbbbo..",
-            "..obbbbbbbbbbo..",
-            "..obbbbbbbbbbo..",
-            "...oobbbbbboo...",
-            "....obbo.obbo...",
-            "....obbo.obbo...",
-            "....oooo.oooo..."
-        ],
-        airborneRows: [
-            21: "................",
-            22: ".....obbobbo....",
-            23: ".....oooooo....."
-        ]
-    )
-
-    /// A fuzzball that cannot leave a mess alone. Irregular tufts, wide base.
-    static let lint = PetCharacter(
-        palette: PetPalette(
-            outline: Color(red: 0.16, green: 0.14, blue: 0.13),
-            body: Color(red: 0.68, green: 0.62, blue: 0.56),
-            highlight: Color(red: 0.82, green: 0.77, blue: 0.71),
-            shade: Color(red: 0.52, green: 0.47, blue: 0.42),
-            eye: Color(red: 0.10, green: 0.09, blue: 0.08),
-            eyeHighlight: .white
-        ),
-        body: [
-            "................",
-            "................",
-            "................",
-            "...o..oooo..o...",
-            "..ohoohhhhooho..",
-            ".ohhhhhhhhhhhho.",
-            "oohhhhhhhhhhhhoo",
-            ".obbbbbbbbbbbbo.",
-            "obbbbbbbbbbbbbbo",
-            "obbbbbbbbbbbbbbo",
-            "obbbbbbbbbbbbbbo",
-            "obbbbbbbbbbbbbbo",
-            "obbbbbbbbbbbbbbo",
-            "obbbbbbbbbbbbbbo",
-            ".obbbbbbbbbbbbo.",
-            ".obbbbbbbbbbbbo.",
-            "obbbbssbbssbbbbo",
-            "obbbbbbbbbbbbbbo",
-            ".obbbbbbbbbbbbo.",
-            "..obbbbbbbbbbo..",
-            "..obbbbbbbbbbo..",
-            ".oobbo.oo.obboo.",
-            ".ooooo.oo.ooooo.",
-            "................"
-        ],
-        airborneRows: [
-            21: "..obbbo..obbbo..",
-            22: "..ooooo..ooooo.."
-        ]
-    )
-
-    /// Quiet until it isn't. A kernel with a puff on top and a narrow base.
-    static let kernel = PetCharacter(
-        palette: PetPalette(
-            outline: Color(red: 0.22, green: 0.15, blue: 0.06),
-            body: Color(red: 0.93, green: 0.78, blue: 0.36),
-            highlight: Color(red: 0.99, green: 0.94, blue: 0.78),
-            shade: Color(red: 0.78, green: 0.60, blue: 0.22),
-            eye: Color(red: 0.20, green: 0.13, blue: 0.05),
-            eyeHighlight: .white
-        ),
-        body: [
-            "................",
-            "................",
-            "................",
-            "......hhhh......",
-            ".....hhhhhh.....",
-            "....ohhhhhho....",
-            "...oohhhhhhoo...",
-            "..obbbbbbbbbbo..",
-            ".obbbbbbbbbbbbo.",
-            "obbbbbbbbbbbbbbo",
-            "obbbbbbbbbbbbbbo",
-            "obbbbbbbbbbbbbbo",
-            "obbbbbbbbbbbbbbo",
-            "obbbbbbbbbbbbbbo",
-            ".obbbbbbbbbbbbo.",
-            "..obbbbbbbbbbo..",
-            "..obssbbbbssbo..",
-            "..obbbbbbbbbbo..",
-            "...obbbbbbbbo...",
-            "...obbbbbbbbo...",
-            "....obbbbbbo....",
-            ".....obbbbo.....",
-            ".....o.oo.o.....",
-            ".....ooooo......"
-        ],
-        airborneRows: [
-            22: ".....obbbbo.....",
-            23: ".....oooooo....."
-        ]
-    )
+    /// A question mark, for a session that is waiting on you.
+    static let question: PetPart = [
+        ".ww.",
+        "w..w",
+        "...w",
+        "..w.",
+        "....",
+        "..w.",
+    ]
 }

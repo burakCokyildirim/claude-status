@@ -9,12 +9,13 @@ import SwiftUI
 struct PetView: View {
 
     let character: PetCharacter
+    /// The drawing to show, picked by `PetWindowController`.
+    let frame: PetFrame
     let state: SessionState?
-    /// Claude has spoken here since the user last looked. Drawn as its own
+    /// Claude has spoken here since the user last looked. Shown in its own
     /// colour rather than folded into `state`, because "there is something to
     /// read" is a different claim from "this session is blocked on you".
     let isUnread: Bool
-    let transform: PetTransform
     let scale: CGFloat
     /// Sessions that are doing something, so the badge can say the pet is
     /// showing one of several. Idle sessions are left out: a machine can carry
@@ -28,12 +29,10 @@ struct PetView: View {
             // Establishes the panel-sized coordinate space the offsets below use.
             Color.clear
 
-            // The whole panel rather than the pet box: at the top of a hop the
-            // stretched body rises past the box, into the room kept for the bubble.
             sprite
-                .frame(width: panelSize.width, height: panelSize.height)
+                .frame(width: petRect.width, height: petRect.height)
+                .offset(x: petRect.minX, y: petRect.minY)
 
-            // After the sprite, so a hop that reaches the bubble passes behind it.
             if let bubbleTitle {
                 PetBubbleView(
                     title: bubbleTitle,
@@ -48,7 +47,7 @@ struct PetView: View {
 
             if sessionCount > 1 {
                 countBadge
-                    .offset(x: spriteRect.maxX - badgeSize * 0.55, y: spriteRect.maxY - badgeSize)
+                    .offset(x: petRect.maxX - badgeSize * 0.55, y: petRect.maxY - badgeSize)
             }
         }
         .allowsHitTesting(false)
@@ -58,38 +57,18 @@ struct PetView: View {
 
     private var sprite: some View {
         Canvas { context, _ in
-            let rows = character.sprite(for: state ?? .idle, airborne: transform.isAirborne)
             let pixel = scale
-            let margin = CGFloat(PetLayout.overshoot) * scale
-            let spriteWidth = CGFloat(PetLayout.gridWidth) * pixel
-            let spriteHeight = CGFloat(PetLayout.gridHeight) * pixel
-
-            // The canvas spans the panel; the sprite is laid out in the pet box.
-            let box = petRect
-            context.translateBy(x: box.minX, y: box.minY)
-
-            // Anchor squash and stretch at the feet: a body compresses into the
-            // ground, it does not shrink around its middle.
-            let anchor = CGPoint(x: box.width / 2, y: margin + spriteHeight)
-            context.translateBy(x: anchor.x, y: anchor.y)
-            context.scaleBy(x: transform.scaleX, y: transform.scaleY)
-            context.translateBy(x: -anchor.x, y: -anchor.y)
-            // Grid offsets are whole pixels, and y is inverted because the view's
-            // origin is at the top while the motion layer measures upward.
-            context.translateBy(x: transform.offsetX * pixel, y: -transform.offsetY * pixel)
-
-            let originX = ((box.width - spriteWidth) / 2).rounded()
-            for (row, line) in rows.enumerated() {
-                for (column, value) in line.enumerated() {
-                    guard let color = character.color(for: value, accent: accentColor) else { continue }
+            for (row, line) in frame.rows.enumerated() {
+                for (column, key) in line.enumerated() {
+                    guard let color = character.color(for: key) else { continue }
                     let rect = CGRect(
-                        x: originX + CGFloat(column) * pixel,
-                        y: margin + CGFloat(row) * pixel,
+                        x: CGFloat(column) * pixel,
+                        y: CGFloat(row) * pixel,
                         width: pixel,
                         height: pixel
                     )
-                    // Hard edges: anti-aliased, squash and stretch would leave a
-                    // seam of backdrop between every pair of neighbouring cells.
+                    // Hard edges: anti-aliased, neighbouring cells would leave a
+                    // hairline seam of backdrop between them.
                     context.fill(Path(rect), with: .color(color), style: FillStyle(antialiased: false))
                 }
             }
@@ -111,9 +90,7 @@ struct PetView: View {
 
     // MARK: - Geometry
 
-    private var panelSize: CGSize { PetLayout.panelSize(scale: scale) }
     private var petRect: CGRect { PetLayout.petRect(scale: scale) }
-    private var spriteRect: CGRect { PetLayout.spriteRect(scale: scale) }
     private var bubbleRect: CGRect { PetLayout.bubbleRect(scale: scale) }
 
     private var stateLabel: String {

@@ -54,14 +54,16 @@ enum PetEmptyBehavior: String, CaseIterable {
 
 /// Which character the pet is drawn as.
 enum PetCharacterID: String, CaseIterable {
+    case claudie
     case nibble
-    case lint
+    case quack
     case kernel
 
     var label: String {
         switch self {
+        case .claudie: "Claudie"
         case .nibble: "Nibble"
-        case .lint: "Lint"
+        case .quack: "Quack"
         case .kernel: "Kernel"
         }
     }
@@ -69,9 +71,10 @@ enum PetCharacterID: String, CaseIterable {
     /// One-line personality blurb, shown under the picker.
     var blurb: String {
         switch self {
-        case .nibble: "A tidy little bot, one bite short of a byte."
-        case .lint: "A fuzzball that cannot leave a mess alone."
-        case .kernel: "Quiet until it isn't. Then it pops."
+        case .claudie: "Pulls out a laptop and gets to work."
+        case .nibble: "Thinks with its eyes."
+        case .quack: "Listens while you explain."
+        case .kernel: "Pops out bits of program."
         }
     }
 }
@@ -107,7 +110,7 @@ nonisolated struct PetSettings: Equatable {
         size: .medium,
         bubbleMode: .hover,
         emptyBehavior: .rest,
-        character: .nibble
+        character: .claudie
     )
 
     static func load(from defaults: UserDefaults? = AppGroup.defaults) -> PetSettings {
@@ -117,7 +120,7 @@ nonisolated struct PetSettings: Equatable {
             size: value(defaults.string(forKey: Keys.size), default: .medium),
             bubbleMode: value(defaults.string(forKey: Keys.bubbleMode), default: .hover),
             emptyBehavior: value(defaults.string(forKey: Keys.emptyBehavior), default: .rest),
-            character: value(defaults.string(forKey: Keys.character), default: .nibble)
+            character: value(defaults.string(forKey: Keys.character), default: .claudie)
         )
     }
 

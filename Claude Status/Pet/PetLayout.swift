@@ -9,15 +9,11 @@ import Foundation
 /// bottom-left origin.
 nonisolated enum PetLayout {
 
-    /// The sprite grid. Portrait, so the character has room for a head, a body,
-    /// and vertical motion.
-    static let gridWidth = 16
-    static let gridHeight = 24
-
-    /// Grid pixels of empty margin drawn around the sprite so hops and stretch
-    /// are not clipped by the panel edge. Nothing is ever drawn here, so it
-    /// stays fully transparent and clicks pass straight through it.
-    static let overshoot = 4
+    /// The canvas every frame is drawn on. Motion is drawn into the frames rather
+    /// than applied to them, so nothing lands outside the canvas and it needs no
+    /// margin around it.
+    static let gridWidth = 20
+    static let gridHeight = 16
 
     /// Space reserved above the pet for the speech bubble. Reserved whether or
     /// not the bubble is showing, so the pet never moves when it appears.
@@ -25,13 +21,10 @@ nonisolated enum PetLayout {
     static let bubbleWidth: CGFloat = 220
     static let bubbleGap: CGFloat = 6
 
-    /// The pet's own box: the sprite plus its motion margin. This is what the
-    /// user perceives as "the pet", and what stored positions refer to.
+    /// The pet's own box: the canvas at `scale`. This is what the user perceives
+    /// as "the pet", what takes the mouse, and what stored positions refer to.
     static func petSize(scale: CGFloat) -> CGSize {
-        CGSize(
-            width: CGFloat(gridWidth + overshoot * 2) * scale,
-            height: CGFloat(gridHeight + overshoot * 2) * scale
-        )
+        CGSize(width: CGFloat(gridWidth) * scale, height: CGFloat(gridHeight) * scale)
     }
 
     /// The whole panel: the pet box with the bubble reserved above it.
@@ -53,15 +46,6 @@ nonisolated enum PetLayout {
             width: pet.width,
             height: pet.height
         )
-    }
-
-    /// The sprite itself, with the motion margin removed.
-    ///
-    /// This is the mouse target. It is deliberately fixed: if it tracked the
-    /// animation, clicking a hopping pet would mean chasing a moving target.
-    static func spriteRect(scale: CGFloat) -> CGRect {
-        let margin = CGFloat(overshoot) * scale
-        return petRect(scale: scale).insetBy(dx: margin, dy: margin)
     }
 
     /// The bubble's box inside the panel: top, spanning the full width.

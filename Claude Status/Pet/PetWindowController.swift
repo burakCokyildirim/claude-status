@@ -30,20 +30,19 @@ final class PetWindowController: NSObject {
 
     private var session: ClaudeSession?
     private var sessionCount = 0
-    /// Suppresses the startle reaction on the very first update.
+    /// The first update starts the pet in its mood rather than moving it there.
     private var hasApplied = false
 
     // MARK: Animation state
 
-    private var restingAnimation: PetAnimation = .still
-    private var oneShot: PetAnimation?
-    private var oneShotStartedAt: Date = .distantPast
-    private var loopStartedAt: Date = Date()
+    private var playback: PetPlayback
+    /// Fires when the frame on screen is due to change, and at no other time.
     private var frameTimer: Timer?
     private var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
 
-    /// Pixel art does not need a high frame rate, and the pet is on screen all day.
-    private static let frameInterval: TimeInterval = 1.0 / 12.0
+    /// Frames are timed on the uptime clock, which a change to the system clock
+    /// cannot send backwards and strand the pet on one frame.
+    private static var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
 
     /// Observers, kept per notification centre: `NSWorkspace` posts on its own,
     /// and removing from only one of them is a silent leak.
@@ -71,6 +70,11 @@ final class PetWindowController: NSObject {
         self.onShowSessionList = onShowSessionList
         self.onShowSettings = onShowSettings
         self.onHide = onHide
+        playback = PetPlayback(
+            character: PetCharacter.character(for: settings.character),
+            mood: .resting,
+            now: Self.now
+        )
         super.init()
     }
 
@@ -91,7 +95,7 @@ final class PetWindowController: NSObject {
         panel.contentView = hosting
 
         // Sprite-sized, so the sprite is the only thing that takes the mouse.
-        let spriteFrame = NSRect(origin: .zero, size: PetLayout.spriteRect(scale: scale).size)
+        let spriteFrame = NSRect(origin: .zero, size: PetLayout.petSize(scale: scale))
         let content = PetContentView(frame: spriteFrame)
         content.interactiveRect = spriteFrame
         content.controller = self
@@ -121,7 +125,6 @@ final class PetWindowController: NSObject {
     func tearDown() {
         frameTimer?.invalidate()
         frameTimer = nil
-        oneShot = nil
         // Interaction state belongs to the view that is about to go away. Left
         // set, a rebuild triggered while the mouse is over the pet would leave
         // the bubble stuck open until the new tracking area saw an exit.
@@ -154,6 +157,13 @@ final class PetWindowController: NSObject {
 
     /// Applies a fresh settings snapshot, rebuilding only if the geometry moved.
     func update(settings: PetSettings) {
+        if settings.character != self.settings.character {
+            playback = PetPlayback(
+                character: PetCharacter.character(for: settings.character),
+                mood: playback.target,
+                now: Self.now
+            )
+        }
         self.settings = settings
         guard panel != nil else { return }
 
@@ -181,11 +191,12 @@ final class PetWindowController: NSObject {
     func apply(sessions: [ClaudeSession]) {
         syncHitPanel()
         let resolved = PetPresenter.resolve(from: sessions)
-        let sessionChanged = resolved?.id != session?.id || resolved?.state != session?.state
+        let mood = PetMood(state: resolved?.state, isUnread: resolved?.isUnread == true)
+        let sessionChanged = resolved?.id != session?.id || mood != playback.target
 
         // The tick that feeds this fires every second whether or not anything
         // moved; without this the pet would rebuild its view once a second for
-        // nothing, and would never be able to claim it is free when idle.
+        // nothing.
         // Idle sessions are not what the badge is for: it says how many sessions
         // are doing something behind the one the pet stands for. An unread one
         // counts — the hook calls it idle, but it is holding an answer.
@@ -194,23 +205,16 @@ final class PetWindowController: NSObject {
 
         session = resolved
         sessionCount = busyCount
-        restingAnimation = PetAnimation.resting(for: resolved?.state)
 
-        if sessionChanged, hasApplied, resolved != nil {
-            startOneShot(.startle)
+        if hasApplied {
+            playback.play(mood, now: Self.now)
+        } else {
+            playback = PetPlayback(character: playback.character, mood: mood, now: Self.now)
         }
         hasApplied = true
 
         updateVisibility()
         render()
-        updateAnimationDriver()
-    }
-
-    /// Plays a one-shot reaction. Ignored under reduced motion.
-    func startOneShot(_ animation: PetAnimation) {
-        guard !reduceMotion, animation.duration != nil else { return }
-        oneShot = animation
-        oneShotStartedAt = Date()
         updateAnimationDriver()
     }
 
@@ -233,10 +237,14 @@ final class PetWindowController: NSObject {
 
     private func makeView() -> PetView {
         PetView(
-            character: PetCharacter.character(for: settings.character),
+            character: playback.character,
+            frame: reduceMotion ? playback.character.still(for: playback.target) : playback.frame,
+            // The bubble and the badge follow the session at once, while the drawing
+            // may still be playing an exit or an entrance on its way there. On
+            // purpose: the words are the exact part, and a second of the character
+            // catching up reads as it reacting.
             state: session?.state,
             isUnread: session?.isUnread == true,
-            transform: currentTransform,
             scale: settings.size.scale,
             sessionCount: sessionCount,
             bubbleTitle: bubbleTitle
@@ -252,60 +260,56 @@ final class PetWindowController: NSObject {
         }
     }
 
-    /// The transform for right now: a one-shot while it is running, otherwise the
-    /// state's resting loop.
-    private var currentTransform: PetTransform {
-        guard !reduceMotion else { return .identity }
-
-        if let oneShot, let duration = oneShot.duration {
-            let elapsed = Date().timeIntervalSince(oneShotStartedAt)
-            if elapsed < duration {
-                return PetMotion.transform(for: oneShot, phase: elapsed / duration)
-            }
-        }
-
-        guard restingAnimation.isAnimated else { return .identity }
-        let period = restingAnimation.period
-        let elapsed = Date().timeIntervalSince(loopStartedAt).truncatingRemainder(dividingBy: period)
-        return PetMotion.transform(for: restingAnimation, phase: elapsed / period)
-    }
-
     // MARK: - Animation Driver
 
     /// The single place that decides whether the pet costs any CPU.
     ///
-    /// Everything that can change the answer calls back into here, so "no timers
-    /// when idle, hidden, or disabled" is one condition to audit rather than a
-    /// property spread across the class.
+    /// Everything that can change the answer calls back into here, so "no timer
+    /// while hidden, covered, disabled, or holding still for Reduce Motion" is one
+    /// condition to audit rather than a property spread across the class. When a
+    /// timer does run it wakes once per frame, when that frame is due, rather
+    /// than on a fixed beat: most frames stay up for a few hundred milliseconds.
     private func updateAnimationDriver() {
+        frameTimer?.invalidate()
+        frameTimer = nil
+
         let isOnScreen = panel?.isVisible == true
             && panel?.occlusionState.contains(.visible) == true
-        let needsFrames = !reduceMotion && isOnScreen
-            && (oneShot != nil || restingAnimation.isAnimated)
+        guard let delay = Self.frameTimerDelay(
+            isOnScreen: isOnScreen,
+            reduceMotion: reduceMotion,
+            nextFrameAt: playback.nextFrameAt,
+            now: Self.now
+        ) else { return }
 
-        guard needsFrames else {
-            frameTimer?.invalidate()
-            frameTimer = nil
-            return
-        }
-        guard frameTimer == nil else { return }
-
-        let timer = Timer(timeInterval: Self.frameInterval, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
             // Added to the main run loop below, so it always fires on the main thread.
-            MainActor.assumeIsolated { self?.tick() }
+            MainActor.assumeIsolated { self?.frameDidEnd() }
         }
+        timer.tolerance = min(delay / 10, 0.02)
         // `.common` so the pet keeps moving while a menu is being tracked.
         RunLoop.main.add(timer, forMode: .common)
         frameTimer = timer
     }
 
-    private func tick() {
-        if let oneShot, let duration = oneShot.duration,
-           Date().timeIntervalSince(oneShotStartedAt) >= duration {
-            self.oneShot = nil
-            updateAnimationDriver()
+    private func frameDidEnd() {
+        frameTimer = nil
+        if playback.advance(now: Self.now) {
+            render()
         }
-        render()
+        updateAnimationDriver()
+    }
+
+    /// How long until the frame timer should fire, or `nil` for no timer at all:
+    /// the pet is hidden or covered, or holding still for Reduce Motion.
+    nonisolated static func frameTimerDelay(
+        isOnScreen: Bool,
+        reduceMotion: Bool,
+        nextFrameAt: TimeInterval,
+        now: TimeInterval
+    ) -> TimeInterval? {
+        guard isOnScreen, !reduceMotion else { return nil }
+        return max(nextFrameAt - now, 0)
     }
 
     // MARK: - Observers
@@ -375,16 +379,19 @@ final class PetWindowController: NSObject {
         let value = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         guard value != reduceMotion else { return }
         reduceMotion = value
-        if reduceMotion { oneShot = nil }
+        if !reduceMotion {
+            // Out of the still into the mood's loop, rather than resuming an
+            // entrance or exit that was never shown.
+            playback = PetPlayback(character: playback.character, mood: playback.target, now: Self.now)
+        }
         render()
         updateAnimationDriver()
     }
 
     // MARK: - Interaction
 
-    /// A click that stayed put: react, then focus the session it stands for.
+    /// A click that stayed put: focus the session the pet stands for.
     func petWasClicked() {
-        startOneShot(.poke)
         guard let session else { return }
         onFocus(session)
     }
@@ -475,9 +482,9 @@ final class PetWindowController: NSObject {
     var interactiveScreenRect: NSRect? {
         guard let panel else { return nil }
         let scale = settings.size.scale
-        let sprite = PetLayout.spriteRect(scale: scale)
+        let sprite = PetLayout.petRect(scale: scale)
         let panelHeight = PetLayout.panelSize(scale: scale).height
-        // `spriteRect` is in the flipped panel space; screen coordinates count up.
+        // `petRect` is in the flipped panel space; screen coordinates count up.
         return NSRect(
             x: panel.frame.minX + sprite.minX,
             y: panel.frame.minY + (panelHeight - sprite.maxY),

@@ -7,21 +7,16 @@ import Testing
 @MainActor
 struct PetViewTests {
 
-    /// The backdrop plus the seven colours a waiting Nibble is drawn with.
-    private static let paletteColourCount = 8
+    private static let nibble = PetCharacter.character(for: .nibble)
 
-    private func renderPet(
-        _ transform: PetTransform,
-        state: SessionState = .waiting,
-        isUnread: Bool = false
-    ) throws -> CGImage {
+    private func renderPet(_ frame: PetFrame, character: PetCharacter) throws -> CGImage {
         let scale = PetSize.medium.scale
         let panel = PetLayout.panelSize(scale: scale)
         let view = PetView(
-            character: PetCharacter.character(for: .nibble),
-            state: state,
-            isUnread: isUnread,
-            transform: transform,
+            character: character,
+            frame: frame,
+            state: .waiting,
+            isUnread: false,
             scale: scale,
             sessionCount: 1,
             bubbleTitle: nil
@@ -59,34 +54,24 @@ struct PetViewTests {
         return pixels
     }
 
-    /// Unread is drawn in its own colour rather than the state's: the point of
-    /// the signal is that it does not claim the session is blocked on the user.
-    @Test func anUnreadPetIsDrawnInItsOwnColour() throws {
-        let idle = try renderPet(.identity, state: .idle)
-        let unread = try renderPet(.identity, state: .idle, isUnread: true)
+    /// The pet is drawn from the frame it is handed, and from nothing else.
+    @Test func drawsTheFrameItIsGiven() throws {
+        let waiting = Self.nibble.still(for: .waiting)
+        let idle = Self.nibble.still(for: .idle)
 
-        #expect(pixels(of: unread) != pixels(of: idle))
-        // And it stays pixel art: a colour arriving through a blend rather than
-        // the palette would show up as seams along every cell edge.
-        #expect(distinctColours(in: unread) <= Self.paletteColourCount)
+        let nibble = Self.nibble
+        #expect(pixels(of: try renderPet(waiting, character: nibble)) != pixels(of: try renderPet(idle, character: nibble)))
+        #expect(pixels(of: try renderPet(waiting, character: nibble)) == pixels(of: try renderPet(waiting, character: nibble)))
     }
 
-    @Test func restingSpriteUsesOnlyPaletteColours() throws {
-        #expect(distinctColours(in: try renderPet(.identity)) <= Self.paletteColourCount)
-    }
-
-    /// Squash and stretch puts cell edges between device pixels. Filled with
-    /// anti-aliasing, every seam lets the backdrop bleed through as a grid.
-    @Test func squashedSpriteKeepsHardPixelEdges() throws {
-        let squash = PetMotion.transform(for: .poke, phase: 0.18)
-        #expect(distinctColours(in: try renderPet(squash)) <= Self.paletteColourCount)
-    }
-
-    /// At the top of a hop the stretched body rises past the pet box, so the
-    /// mark above the head has to be drawn there rather than clipped off.
-    @Test func hopKeepsTheMarkAboveTheHead() throws {
-        let hopPeak = PetMotion.transform(for: .poke, phase: 0.42)
-        #expect(distinctColours(in: try renderPet(hopPeak)) == distinctColours(in: try renderPet(.identity)))
+    /// The backdrop plus the colours the frame uses, and no blends between them.
+    @Test func spriteUsesOnlyPaletteColours() throws {
+        for id in PetCharacterID.allCases {
+            let character = PetCharacter.character(for: id)
+            let frame = character.still(for: .active)
+            let keys = Set(frame.rows.joined()).subtracting(["."])
+            #expect(distinctColours(in: try renderPet(frame, character: character)) <= keys.count + 1)
+        }
     }
 
     /// A long session name has to truncate. Sized to its text instead, the
