@@ -1,26 +1,25 @@
 import Foundation
 
-/// How large the pet is drawn, as an integer scale of the sprite grid.
-enum PetSize: String, CaseIterable {
-    case small
-    case medium
-    case large
+/// How large the pet is drawn, as an integer scale of the sprite grid, picked on
+/// a slider.
+nonisolated struct PetSize: Equatable {
 
-    var label: String {
-        switch self {
-        case .small: "Small"
-        case .medium: "Medium"
-        case .large: "Large"
-        }
+    /// From 60 by 48 points to 300 by 240: small enough for a laptop, large
+    /// enough to hold its own on a big display.
+    static let range = 3...15
+
+    static let `default` = PetSize(5)
+
+    /// Points per sprite pixel, always within `range`. Whole points, so the
+    /// pixel art stays crisp at every size.
+    let pointsPerPixel: Int
+
+    init(_ pointsPerPixel: Int) {
+        self.pointsPerPixel = min(max(pointsPerPixel, Self.range.lowerBound), Self.range.upperBound)
     }
 
-    /// Points per sprite pixel. Kept integral so the pixel art stays crisp.
     var scale: CGFloat {
-        switch self {
-        case .small: 3
-        case .medium: 4
-        case .large: 5
-        }
+        CGFloat(pointsPerPixel)
     }
 }
 
@@ -107,7 +106,7 @@ nonisolated struct PetSettings: Equatable {
     /// app, so every default here keeps it out of the way until asked for.
     static let `default` = PetSettings(
         isEnabled: false,
-        size: .medium,
+        size: .default,
         bubbleMode: .hover,
         emptyBehavior: .rest,
         character: .claudie
@@ -117,7 +116,7 @@ nonisolated struct PetSettings: Equatable {
         guard let defaults else { return .default }
         return PetSettings(
             isEnabled: defaults.bool(forKey: Keys.enabled),
-            size: value(defaults.string(forKey: Keys.size), default: .medium),
+            size: (defaults.object(forKey: Keys.size) as? Int).map(PetSize.init) ?? .default,
             bubbleMode: value(defaults.string(forKey: Keys.bubbleMode), default: .hover),
             emptyBehavior: value(defaults.string(forKey: Keys.emptyBehavior), default: .rest),
             character: value(defaults.string(forKey: Keys.character), default: .claudie)

@@ -16,7 +16,7 @@ struct PetViewTests {
         isUnread: Bool = false,
         sessionCount: Int = 1
     ) throws -> CGImage {
-        let scale = PetSize.medium.scale
+        let scale = PetSize.default.scale
         let panel = PetLayout.panelSize(scale: scale)
         let view = PetView(
             character: character,

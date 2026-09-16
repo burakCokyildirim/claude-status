@@ -19,7 +19,7 @@ struct SettingsView: View {
     @AppStorage(PetSettings.Keys.character, store: AppGroup.defaults)
     private var petCharacter: PetCharacterID = .claudie
     @AppStorage(PetSettings.Keys.size, store: AppGroup.defaults)
-    private var petSize: PetSize = .medium
+    private var petSize: Int = PetSize.default.pointsPerPixel
     @AppStorage(PetSettings.Keys.bubbleMode, store: AppGroup.defaults)
     private var petBubbleMode: PetBubbleMode = .hover
     @AppStorage(PetSettings.Keys.emptyBehavior, store: AppGroup.defaults)
@@ -56,12 +56,19 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
 
-                    Picker("Pet Size", selection: $petSize) {
-                        ForEach(PetSize.allCases, id: \.self) { size in
-                            Text(size.label).tag(size)
-                        }
+                    Slider(
+                        value: Binding(
+                            get: { Double(PetSize(petSize).pointsPerPixel) },
+                            set: { petSize = Int($0.rounded()) }
+                        ),
+                        in: Double(PetSize.range.lowerBound)...Double(PetSize.range.upperBound),
+                        step: 1
+                    ) {
+                        Text("Pet Size")
                     }
-                    .pickerStyle(.segmented)
+                    Text(petSizeCaption)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
 
                     Picker("Speech Bubbles", selection: $petBubbleMode) {
                         ForEach(PetBubbleMode.allCases, id: \.self) { mode in
@@ -136,6 +143,12 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 420)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// What the slider's position means on screen.
+    private var petSizeCaption: String {
+        let size = PetLayout.petSize(scale: PetSize(petSize).scale)
+        return "\(Int(size.width)) × \(Int(size.height)) points"
     }
 
     private func addProfileFolder() {
