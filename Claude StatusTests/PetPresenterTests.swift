@@ -53,6 +53,33 @@ struct PetPresenterTests {
         }
     }
 
+    /// The bubble lists what is doing something or holding an answer, in the pet's
+    /// own order, so its first line is the session the pet stands for.
+    @Test func bubbleListsBusySessionsInThePetsOrder() {
+        let sessions = [
+            session(id: "idle", state: .idle),
+            session(id: "active", state: .active, secondsAgo: 5),
+            session(id: "unread", state: .idle, isUnread: true),
+            session(id: "waiting", state: .waiting),
+            session(id: "compacting", state: .compacting),
+            session(id: "newer-active", state: .active, secondsAgo: 1)
+        ]
+        let listed = PetPresenter.listed(from: sessions).map(\.sessionId)
+
+        #expect(listed == ["waiting", "unread", "newer-active", "active", "compacting"])
+        #expect(listed.first == PetPresenter.resolve(from: sessions)?.sessionId)
+    }
+
+    /// With nothing busy, the bubble still names the session the pet stands for.
+    @Test func bubbleFallsBackToThePetsOwnSession() {
+        let sessions = [
+            session(id: "older", state: .idle, secondsAgo: 60),
+            session(id: "newer", state: .idle)
+        ]
+        #expect(PetPresenter.listed(from: sessions).map(\.sessionId) == ["newer"])
+        #expect(PetPresenter.listed(from: []).isEmpty)
+    }
+
     @Test func resolvesNilWithoutSessions() {
         #expect(PetPresenter.resolve(from: []) == nil)
     }

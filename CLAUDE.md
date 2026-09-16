@@ -80,6 +80,7 @@ Claude Status/                         # Main app target
     Characters/                        # Claudie, Nibble, Quack, Kernel: parts and the frames they make
     PetPanel.swift                     # NSPanel: borderless, non-activating, .floating, all Spaces
     PetContentView.swift               # NSView: hit test, tracking area, click/drag, context menu
+    PetBubbleContentView.swift         # NSView: speech bubble hover and row clicks, in a panel of its own
     PetWindowController.swift          # Lifecycle, placement, animation driver, teardown
   Views/                               # SwiftUI views
     SessionListView.swift              # Popover: header, session list, empty state, Settings/Quit
@@ -88,7 +89,7 @@ Claude Status/                         # Main app target
     SettingsView.swift                 # Icon style, launch at login, plugin management, desktop pet
     ProductivityBarView.swift          # Visual productivity tracking bar
     PetView.swift                      # SwiftUI Canvas: sprite render, count badge
-    PetBubbleView.swift                # Pet speech bubble
+    PetBubbleView.swift                # Pet speech bubble: busy sessions, one line each
 
 Shared/                                # Models shared between app and widget
   ClaudeSession.swift                  # ClaudeSession model, SessionState enum, SessionSource enum
@@ -158,7 +159,7 @@ Sessions run by the Claude desktop app carry one signal the hook cannot give: **
 
 ### Desktop Pet
 
-An optional floating character, off by default. `PetWindowController` owns a borderless, non-activating `NSPanel` at `.floating` that joins all Spaces; SwiftUI draws into it and it lets every click through, while `PetContentView` owns every event from a sprite-sized child panel on top, so only the sprite is clickable and everything around it clicks through. `PetPresenter` picks the single session it stands for, reusing `SessionState.sortOrder`. Characters are frame animations on a 20x16 canvas: each file under `Characters/` draws a character's parts once and places them to make its frames, and every mood — the four states, unread, and resting with no session — has a routine of an optional entrance, a loop, and an optional exit. `PetPlayback` sequences those as a pure value, and the controller's timer wakes only when the frame on screen is due to change. Settings live in the App Group defaults under `pet*` keys and are re-read on the status item's existing one-second tick — the pet polls nothing of its own, runs no frame timer while hidden or covered, and under reduced motion holds each mood on a single still frame.
+An optional floating character, off by default. `PetWindowController` owns a borderless, non-activating `NSPanel` at `.floating` that joins all Spaces; SwiftUI draws into it and it lets every click through, while `PetContentView` owns every event from a sprite-sized child panel on top, so only the sprite is clickable and everything around it clicks through. `PetPresenter` picks the single session it stands for, reusing `SessionState.sortOrder`, and the sessions its speech bubble lists: every one doing something or holding an answer, in the same order. The bubble is a third child panel that takes the mouse; while the pointer is on one of its lines the pet acts out that session, and a click focuses it. Characters are frame animations on a 20x16 canvas: each file under `Characters/` draws a character's parts once and places them to make its frames, and every mood — the four states, unread, and resting with no session — has a routine of an optional entrance, a loop, and an optional exit. `PetPlayback` sequences those as a pure value, and the controller's timer wakes only when the frame on screen is due to change. Settings live in the App Group defaults under `pet*` keys and are re-read on the status item's existing one-second tick — the pet polls nothing of its own, runs no frame timer while hidden or covered, and under reduced motion holds each mood on a single still frame.
 
 ### Productivity Tracking
 

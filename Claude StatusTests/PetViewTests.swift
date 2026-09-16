@@ -24,8 +24,7 @@ struct PetViewTests {
             state: state,
             isUnread: isUnread,
             scale: scale,
-            sessionCount: sessionCount,
-            bubbleTitle: nil
+            sessionCount: sessionCount
         )
         .frame(width: panel.width, height: panel.height)
         .background(Color.black)
@@ -102,16 +101,23 @@ struct PetViewTests {
     }
 
     /// A long session name has to truncate. Sized to its text instead, the
-    /// bubble outgrows the panel, which clips both ends and the state label.
-    @Test func bubbleFitsTheWidthItIsOffered() throws {
+    /// bubble outgrows its panel, which clips both ends and the state label.
+    @Test func bubbleKeepsToItsWidth() throws {
         let bubble = PetBubbleView(
-            title: "feat-affectionate-archimedes-bsew0o-desktop-pet-with-a-long-name",
-            stateLabel: "Waiting",
-            accent: .orange
+            rows: [
+                PetBubbleRow(
+                    title: "feat-affectionate-archimedes-bsew0o-desktop-pet-with-a-long-name",
+                    stateLabel: "Waiting",
+                    accent: .orange
+                ),
+                PetBubbleRow(title: "short", stateLabel: "Active", accent: .green),
+            ],
+            isAbove: true,
+            highlighted: 1
         )
         let renderer = ImageRenderer(content: bubble)
-        renderer.proposedSize = ProposedViewSize(width: PetLayout.bubbleWidth, height: nil)
         let image = try #require(renderer.cgImage)
-        #expect(CGFloat(image.width) / renderer.scale <= PetLayout.bubbleWidth)
+        #expect(CGFloat(image.width) / renderer.scale <= PetLayout.bubbleWidth + PetLayout.bubbleShadowInset * 2)
+        #expect(CGFloat(image.height) / renderer.scale == PetLayout.bubbleHeight(rows: 2))
     }
 }

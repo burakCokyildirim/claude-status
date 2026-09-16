@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Draws the desktop pet: the character sprite, its speech bubble, and the badge
-/// that says how many sessions it is standing in for.
+/// Draws the desktop pet: the character sprite, and the badge that says how many
+/// sessions it is standing in for. The speech bubble has a panel of its own.
 ///
 /// Purely a renderer. It takes no gestures and no hover, because SwiftUI's
 /// gesture and hover machinery is unreliable in a window that never becomes key;
@@ -21,8 +21,6 @@ struct PetView: View {
     /// showing one of several. Idle sessions are left out: a machine can carry
     /// dozens of them for days without any of them wanting attention.
     let sessionCount: Int
-    /// The bubble's text, or `nil` when the bubble is hidden.
-    let bubbleTitle: String?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -33,21 +31,9 @@ struct PetView: View {
                 .frame(width: petRect.width, height: petRect.height)
                 .offset(x: petRect.minX, y: petRect.minY)
 
-            if let bubbleTitle {
-                PetBubbleView(
-                    title: bubbleTitle,
-                    stateLabel: stateLabel,
-                    accent: accentColor
-                )
-                // Room for the capsule's shadow when a long title fills the width.
-                .padding(.horizontal, 6)
-                .frame(width: bubbleRect.width, height: bubbleRect.height)
-                .offset(x: bubbleRect.minX, y: bubbleRect.minY)
-            }
-
             if sessionCount > 1 {
                 countBadge
-                    .offset(x: petRect.maxX - badgeSize * 0.55, y: petRect.maxY - badgeSize)
+                    .offset(x: badgeRect.minX, y: badgeRect.minY)
             }
         }
         .allowsHitTesting(false)
@@ -79,35 +65,15 @@ struct PetView: View {
 
     private var countBadge: some View {
         Text("\(sessionCount)")
-            .font(.system(size: badgeSize * 0.6, weight: .bold, design: .rounded))
+            .font(.system(size: badgeRect.height * 0.6, weight: .bold, design: .rounded))
             .foregroundStyle(.white)
-            .frame(width: badgeSize, height: badgeSize)
-            .background(Circle().fill(accentColor))
+            .frame(width: badgeRect.width, height: badgeRect.height)
+            .background(Circle().fill(PetMood(state: state, isUnread: isUnread).accent))
             .overlay(Circle().stroke(Color.black.opacity(0.35), lineWidth: 1))
     }
-
-    private var badgeSize: CGFloat { max(16, scale * 4.5) }
 
     // MARK: - Geometry
 
     private var petRect: CGRect { PetLayout.petRect(scale: scale) }
-    private var bubbleRect: CGRect { PetLayout.bubbleRect(scale: scale) }
-
-    private var stateLabel: String {
-        guard let state else { return "No sessions" }
-        return isUnread ? "Unread" : state.label
-    }
-
-    /// Mirrors the dot colours in `SessionRowView`, so the pet and the session
-    /// list never disagree about what a state looks like.
-    private var accentColor: Color {
-        guard let state else { return .gray }
-        if isUnread { return SessionPalette.unread }
-        switch state {
-        case .active: return .green
-        case .waiting: return .orange
-        case .compacting: return .blue
-        case .idle: return .gray
-        }
-    }
+    private var badgeRect: CGRect { PetLayout.badgeRect(scale: scale) }
 }

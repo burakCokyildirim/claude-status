@@ -23,6 +23,18 @@ enum PetPresenter {
         sessions.min(by: hasHigherPriority)
     }
 
+    /// The sessions the speech bubble lists: every one doing something or holding
+    /// an answer, in the pet's own order, so the first is the session the pet
+    /// stands for. With none of those, that session alone, so the bubble still
+    /// says whose pet it is.
+    static func listed(from sessions: [ClaudeSession]) -> [ClaudeSession] {
+        let busy = sessions
+            .filter { $0.state != .idle || $0.isUnread == true }
+            .sorted(by: hasHigherPriority)
+        guard busy.isEmpty else { return busy }
+        return resolve(from: sessions).map { [$0] } ?? []
+    }
+
     /// Whether `lhs` outranks `rhs` for the pet.
     ///
     /// `Array.sortedByStateAndActivity` is deliberately not reused here: it stops at

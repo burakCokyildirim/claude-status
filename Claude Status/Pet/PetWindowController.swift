@@ -24,11 +24,20 @@ final class PetWindowController: NSObject {
     private var panel: PetPanel?
     /// Takes the mouse over the sprite only; a child window of `panel`.
     private var hitPanel: PetPanel?
+    /// The speech bubble, a child window of `panel` too: unlike the pet's drawing
+    /// it takes the mouse, and it grows and shrinks with the list it shows.
+    private var bubblePanel: PetPanel?
+    private var bubbleView: PetBubbleContentView?
     private var hostingView: NSHostingView<PetView>?
 
     // MARK: Session state
 
     private var session: ClaudeSession?
+    /// What the session the pet stands for is doing, whatever row of the bubble
+    /// the pointer has the pet showing instead.
+    private var sessionMood = PetMood.resting
+    /// The sessions the bubble lists when it opens, in the pet's order.
+    private var listed: [ClaudeSession] = []
     private var sessionCount = 0
     /// The first update starts the pet in its mood rather than moving it there.
     private var hasApplied = false
@@ -51,6 +60,22 @@ final class PetWindowController: NSObject {
 
     private var isHovered = false
     private var isDragging = false
+    private var isPointerOverBubble = false
+    /// The bubble row under the pointer.
+    private var hoveredRow: Int?
+    /// Whether the bubble shows the whole list, rather than the pet's own line or
+    /// nothing, depending on the setting.
+    private var isBubbleOpen = false
+    /// Which side of the pet the bubble was last placed on.
+    private var isBubbleAbove = true
+    /// Bumped on every pointer change, so a close still waiting out its grace
+    /// period drops out when the pointer comes back.
+    private var bubbleCloseGeneration = 0
+
+    /// Long enough to cross from the pet to its bubble, or to stray off the
+    /// bubble for a moment.
+    private static let bubbleGracePeriod: TimeInterval = 0.3
+
     /// The scale the current panel was laid out for, so a settings change knows
     /// whether the geometry actually needs rebuilding.
     private var builtScale: CGFloat = 0
@@ -105,8 +130,16 @@ final class PetWindowController: NSObject {
         let hitPanel = PetPanel(contentRect: spriteFrame, acceptsMouse: true)
         hitPanel.contentView = content
 
+        // Sized and attached when there is something to say.
+        let bubbleView = PetBubbleContentView(bubble: makeBubble())
+        bubbleView.controller = self
+        let bubblePanel = PetPanel(contentRect: .zero, acceptsMouse: true)
+        bubblePanel.contentView = bubbleView
+
         self.panel = panel
         self.hitPanel = hitPanel
+        self.bubblePanel = bubblePanel
+        self.bubbleView = bubbleView
         self.hostingView = hosting
 
         applyStoredPosition()
@@ -121,6 +154,9 @@ final class PetWindowController: NSObject {
         // `orderFrontRegardless` rather than `orderFront`, which an inactive app
         // can defer until it next activates — which may be never.
         panel.orderFrontRegardless()
+        layoutBubble()
+        playDisplayedMood()
+        render()
         updateAnimationDriver()
     }
 
@@ -133,6 +169,10 @@ final class PetWindowController: NSObject {
         // the bubble stuck open until the new tracking area saw an exit.
         isHovered = false
         isDragging = false
+        isPointerOverBubble = false
+        hoveredRow = nil
+        isBubbleOpen = false
+        bubbleCloseGeneration += 1
         // Drops any re-clamp still waiting out its debounce.
         screenChangeGeneration += 1
 
@@ -151,6 +191,13 @@ final class PetWindowController: NSObject {
             hitPanel.close()
         }
         hitPanel = nil
+        if let bubblePanel {
+            panel?.removeChildWindow(bubblePanel)
+            bubblePanel.contentView = nil
+            bubblePanel.close()
+        }
+        bubblePanel = nil
+        bubbleView = nil
         panel?.contentView = nil
         panel?.orderOut(nil)
         panel?.close()
@@ -177,10 +224,13 @@ final class PetWindowController: NSObject {
             tearDown()
             show()
             updateVisibility()
+            layoutBubble()
             return
         }
 
         updateVisibility()
+        layoutBubble()
+        playDisplayedMood()
         render()
         updateAnimationDriver()
     }
@@ -195,7 +245,9 @@ final class PetWindowController: NSObject {
         syncHitPanel()
         let resolved = PetPresenter.resolve(from: sessions)
         let mood = PetMood(state: resolved?.state, isUnread: resolved?.isUnread == true)
-        let sessionChanged = resolved?.id != session?.id || mood != playback.target
+        let listed = PetPresenter.listed(from: sessions)
+        let sessionChanged = resolved?.id != session?.id || mood != sessionMood
+            || !Self.drawSameBubble(listed, self.listed)
 
         // The tick that feeds this fires every second whether or not anything
         // moved; without this the pet would rebuild its view once a second for
@@ -207,18 +259,26 @@ final class PetWindowController: NSObject {
         guard sessionChanged || busyCount != sessionCount || !hasApplied else { return }
 
         session = resolved
+        sessionMood = mood
+        self.listed = listed
         sessionCount = busyCount
 
-        if hasApplied {
-            playback.play(mood, now: Self.now)
-        } else {
+        if !hasApplied {
             playback = PetPlayback(character: playback.character, mood: mood, now: Self.now)
         }
         hasApplied = true
 
         updateVisibility()
+        layoutBubble()
+        playDisplayedMood()
         render()
         updateAnimationDriver()
+    }
+
+    /// Whether two lists of sessions would draw the same bubble.
+    private static func drawSameBubble(_ lhs: [ClaudeSession], _ rhs: [ClaudeSession]) -> Bool {
+        lhs.map(\.sessionId) == rhs.map(\.sessionId)
+            && lhs.map(PetBubbleRow.init(session:)) == rhs.map(PetBubbleRow.init(session:))
     }
 
     /// Shows or hides the panel for the "no sessions running" setting.
@@ -249,18 +309,119 @@ final class PetWindowController: NSObject {
             state: session?.state,
             isUnread: session?.isUnread == true,
             scale: settings.size.scale,
-            sessionCount: sessionCount,
-            bubbleTitle: bubbleTitle
+            sessionCount: sessionCount
         )
     }
 
-    private var bubbleTitle: String? {
-        guard !isDragging, let session else { return nil }
-        switch settings.bubbleMode {
-        case .always: return session.sessionName ?? session.projectName
-        case .hover: return isHovered ? (session.sessionName ?? session.projectName) : nil
-        case .never: return nil
+    // MARK: - Speech Bubble
+
+    /// The sessions the bubble shows right now: the whole list while it is open,
+    /// the pet's own session alone when the setting keeps a line up anyway, and
+    /// none otherwise.
+    private var bubbleSessions: [ClaudeSession] {
+        guard !isDragging, let session, settings.bubbleMode != .never else { return [] }
+        if isBubbleOpen { return listed }
+        return settings.bubbleMode == .always ? [session] : []
+    }
+
+    /// The bubble's lines. Sessions past its room fold into a last line that
+    /// counts them.
+    private var bubbleRows: [PetBubbleRow] {
+        let sessions = bubbleSessions
+        guard sessions.count > PetLayout.bubbleMaxRows else {
+            return sessions.map(PetBubbleRow.init(session:))
         }
+        let shown = sessions.prefix(PetLayout.bubbleMaxRows - 1)
+        return shown.map(PetBubbleRow.init(session:)) + [PetBubbleRow(moreSessions: sessions.count - shown.count)]
+    }
+
+    /// The session on the row under the pointer, if that row is one.
+    private var hoveredSession: ClaudeSession? {
+        guard isPointerOverBubble, let hoveredRow else { return nil }
+        let sessions = bubbleSessions
+        let isCountingLine = sessions.count > PetLayout.bubbleMaxRows && hoveredRow == PetLayout.bubbleMaxRows - 1
+        return sessions.indices.contains(hoveredRow) && !isCountingLine ? sessions[hoveredRow] : nil
+    }
+
+    /// The mood the pet shows: the hovered session's while the pointer is on its
+    /// row, and the pet's own otherwise.
+    private var displayedMood: PetMood {
+        guard let hoveredSession else { return sessionMood }
+        return PetMood(state: hoveredSession.state, isUnread: hoveredSession.isUnread == true)
+    }
+
+    /// Sends the drawing towards `displayedMood`, through the same entrances and
+    /// exits a real change of state plays.
+    private func playDisplayedMood() {
+        let mood = displayedMood
+        guard mood != playback.target else { return }
+        playback.play(mood, now: Self.now)
+    }
+
+    private func makeBubble() -> PetBubbleView {
+        PetBubbleView(rows: bubbleRows, isAbove: isBubbleAbove, highlighted: isPointerOverBubble ? hoveredRow : nil)
+    }
+
+    /// Fills, sizes, and places the bubble, or takes it down when it has nothing
+    /// to show.
+    private func layoutBubble() {
+        guard let panel, let bubblePanel, let bubbleView else { return }
+        let rows = bubbleRows
+        guard !rows.isEmpty, panel.isVisible, let pet = petScreenRect else {
+            // A panel taken down under the pointer never reports it leaving.
+            isPointerOverBubble = false
+            hoveredRow = nil
+            if bubblePanel.parent != nil { panel.removeChildWindow(bubblePanel) }
+            if bubblePanel.isVisible { bubblePanel.orderOut(nil) }
+            return
+        }
+
+        bubbleView.bubble = makeBubble()
+        let size = CGSize(width: bubbleView.bubbleWidth, height: PetLayout.bubbleHeight(rows: rows.count))
+        let area = Self.screen(holding: pet, among: Self.currentScreens())?.workingArea ?? pet
+        let placement = PetLayout.bubblePlacement(size: size, petRect: pet, in: area)
+        if placement.isAbove != isBubbleAbove {
+            isBubbleAbove = placement.isAbove
+            bubbleView.bubble = makeBubble()
+        }
+        if bubblePanel.frame != placement.frame {
+            bubblePanel.setFrame(placement.frame, display: true)
+        }
+        if bubblePanel.parent !== panel || !bubblePanel.isVisible {
+            panel.addChildWindow(bubblePanel, ordered: .above)
+        }
+    }
+
+    /// The pointer came onto, moved across, or left the pet or its bubble.
+    private func pointerDidChange() {
+        bubbleCloseGeneration += 1
+        let wasOpen = isBubbleOpen
+        if isHovered || isPointerOverBubble {
+            isBubbleOpen = true
+        } else if isBubbleOpen {
+            // Not at once: the pointer leaves the pet a moment before it reaches
+            // the bubble.
+            let generation = bubbleCloseGeneration
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.bubbleGracePeriod) { [weak self] in
+                guard let self, self.bubbleCloseGeneration == generation else { return }
+                self.isBubbleOpen = false
+                self.bubbleDidChange(resized: true)
+            }
+        }
+        bubbleDidChange(resized: isBubbleOpen != wasOpen)
+    }
+
+    private func bubbleDidChange(resized: Bool) {
+        if resized {
+            layoutBubble()
+        } else {
+            bubbleView?.bubble = makeBubble()
+        }
+        let before = playback.target
+        playDisplayedMood()
+        guard playback.target != before else { return }
+        render()
+        updateAnimationDriver()
     }
 
     // MARK: - Animation Driver
@@ -416,12 +577,50 @@ final class PetWindowController: NSObject {
     func hoverChanged(_ hovered: Bool) {
         guard hovered != isHovered else { return }
         isHovered = hovered
-        render()
+        pointerDidChange()
+    }
+
+    /// The pointer is at `point` in the bubble panel's flipped coordinates.
+    func bubblePointerDidMove(to point: CGPoint) {
+        let row = bubbleRow(at: point)
+        guard !isPointerOverBubble || row != hoveredRow else { return }
+        isPointerOverBubble = true
+        hoveredRow = row
+        pointerDidChange()
+    }
+
+    func bubblePointerDidLeave() {
+        guard isPointerOverBubble else { return }
+        isPointerOverBubble = false
+        hoveredRow = nil
+        pointerDidChange()
+    }
+
+    /// A click on a line: focus that session, or open the session list from the
+    /// line counting the ones that did not fit.
+    func bubbleWasClicked(at point: CGPoint) {
+        guard let row = bubbleRow(at: point) else { return }
+        let sessions = bubbleSessions
+        if sessions.count > PetLayout.bubbleMaxRows, row == PetLayout.bubbleMaxRows - 1 {
+            DispatchQueue.main.async { [weak self] in self?.onShowSessionList() }
+        } else if sessions.indices.contains(row) {
+            onFocus(sessions[row])
+        }
+    }
+
+    private func bubbleRow(at point: CGPoint) -> Int? {
+        guard let bubblePanel else { return nil }
+        return PetLayout.bubbleRow(
+            at: point,
+            in: bubblePanel.frame.size,
+            rows: bubbleRows.count,
+            isAbove: isBubbleAbove
+        )
     }
 
     func dragDidBegin() {
         isDragging = true
-        render()
+        bubbleDidChange(resized: true)
     }
 
     /// Persists where the pet was dropped. Apart from a monitor being plugged into
@@ -429,7 +628,7 @@ final class PetWindowController: NSObject {
     /// re-clamping after any other display change must never overwrite it.
     func dragDidEnd() {
         isDragging = false
-        defer { render() }
+        defer { bubbleDidChange(resized: true) }
 
         guard let rect = petScreenRect,
               let screen = Self.screen(holding: rect, among: Self.currentScreens()) else { return }
@@ -547,6 +746,10 @@ final class PetWindowController: NSObject {
         if hitPanel.parent !== panel || !hitPanel.isVisible {
             panel.addChildWindow(hitPanel, ordered: .above)
         }
+        // The bubble is a child panel too, and can be dropped the same way.
+        if let bubblePanel, !bubbleRows.isEmpty, bubblePanel.parent !== panel || !bubblePanel.isVisible {
+            layoutBubble()
+        }
     }
 
     /// Moves the pet box so its origin sits at `origin` in screen coordinates.
@@ -554,6 +757,11 @@ final class PetWindowController: NSObject {
         guard let panel else { return }
         let scale = settings.size.scale
         panel.setFrameOrigin(PetLayout.panelOrigin(forPetOrigin: origin, scale: scale))
+        // The bubble rides along as a child window, but near an edge it may have
+        // to change sides. Not mid-drag, when it is down anyway.
+        if !isDragging {
+            layoutBubble()
+        }
     }
 
     /// Places the pet where the user last dropped it, or in the default corner.
