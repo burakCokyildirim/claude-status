@@ -7,6 +7,13 @@ import Testing
 @MainActor
 struct ClaudeDesktopTests {
 
+    /// Whether the Claude app is in front, as a switch a test can still flip
+    /// after handing it to a store.
+    @MainActor
+    private final class FrontApp {
+        var isClaude = true
+    }
+
     private struct Record {
         let desktopId: String
         let cliId: String
@@ -227,13 +234,13 @@ struct ClaudeDesktopTests {
             try? FileManager.default.removeItem(at: root)
             try? FileManager.default.removeItem(at: log)
         }
-        var inFront = true
+        let front = FrontApp()
         var store = ClaudeDesktopSessionStore(
             roots: [root], defaults: makeDefaults(), focusLog: ClaudeDesktopFocusLog(url: log)
-        ) { inFront }
+        ) { front.isClaude }
         store.refresh(force: true, now: at(10_000))  // read on screen
 
-        inFront = false
+        front.isClaude = false
         store.refresh(force: true, now: at(20_000))  // user moves to another app
 
         #expect(try !unread(&store, "cli-open", spokeAt: 9_900))
