@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Testing
 @testable import Claude_Status
 
@@ -10,8 +11,11 @@ struct PetPlacementTests {
     private static let laptopFrame = CGRect(x: 0, y: 0, width: 1512, height: 982)
     private static let petSize = CGSize(width: 80, height: 64)
 
-    private func screen(_ id: UInt32, _ area: CGRect) -> PetScreen {
-        PetScreen(displayUUID: "display-\(id)", displayID: id, name: "Display \(id)", workingArea: area)
+    private func screen(_ id: UInt32, _ area: CGRect, clearOfDock: CGRect? = nil) -> PetScreen {
+        PetScreen(
+            displayUUID: "display-\(id)", displayID: id, name: "Display \(id)",
+            workingArea: area, clearOfDock: clearOfDock ?? area
+        )
     }
 
     /// The Dock seldom fills its edge, and the space beside it is where the pet
@@ -50,21 +54,76 @@ struct PetPlacementTests {
     }
 
     /// On the main display the pet takes the corner it was left in, though that
-    /// display is another size, or the default corner if it was never moved.
-    /// Saved there, a later change finds the main display rather than pulling
-    /// the pet back to where it came from.
+    /// display is another size. Filed there, a later change finds the main
+    /// display rather than pulling the pet back to where it came from.
     @Test func thePetKeepsItsCornerOnTheMainDisplay() {
         let laptop = screen(1, CGRect(x: 0, y: 0, width: 1512, height: 949))
         let monitor = screen(2, CGRect(x: 1512, y: -200, width: 2560, height: 1415))
         let bottomRight = CGPoint(x: laptop.workingArea.maxX - Self.petSize.width, y: laptop.workingArea.minY)
-        let stored = PetPosition(petOrigin: bottomRight, petSize: Self.petSize, screen: laptop)
+        let stored = PetPosition(petOrigin: bottomRight, petSize: Self.petSize, screen: laptop, dockHidden: true)
 
-        let moved = PetPlacement.originOnMainDisplay(monitor, stored: stored, petSize: Self.petSize)
+        let moved = stored.onDisplay(monitor)
 
-        #expect(moved == CGPoint(x: monitor.workingArea.maxX - Self.petSize.width, y: monitor.workingArea.minY))
-        #expect(PetPlacement.originOnMainDisplay(monitor, stored: nil, petSize: Self.petSize)
-            == PetPlacement.defaultOrigin(in: monitor.workingArea, petSize: Self.petSize))
-        let saved = PetPosition(petOrigin: moved, petSize: Self.petSize, screen: monitor)
-        #expect(PetPlacement.resolveScreen(for: saved, among: [laptop, monitor]) == monitor)
+        #expect(PetPlacement.origin(for: moved, on: monitor, dockShown: false, petSize: Self.petSize)
+            == CGPoint(x: monitor.workingArea.maxX - Self.petSize.width, y: monitor.workingArea.minY))
+        #expect(moved.droppedWhileDockHidden == true)
+        #expect(PetPlacement.resolveScreen(for: moved, among: [laptop, monitor]) == monitor)
+    }
+
+    /// Dropped in a full-screen Space, where the Dock hides, a pet at the bottom
+    /// would end up under the Dock once it comes back. It is lifted clear while
+    /// the Dock shows and returns when it hides; its stored place never moves.
+    @Test func aPetDroppedWhileTheDockHidIsLiftedClearOfIt() {
+        let laptop = screen(
+            1, CGRect(x: 0, y: 0, width: 1512, height: 949),
+            clearOfDock: CGRect(x: 0, y: 58, width: 1512, height: 890)
+        )
+        let bottom = CGPoint(x: 700, y: 0)
+        let droppedInFullScreen = PetPosition(petOrigin: bottom, petSize: Self.petSize, screen: laptop, dockHidden: true)
+        let droppedBesideDock = PetPosition(petOrigin: bottom, petSize: Self.petSize, screen: laptop, dockHidden: false)
+
+        #expect(PetPlacement.origin(for: droppedInFullScreen, on: laptop, dockShown: true, petSize: Self.petSize)
+            == CGPoint(x: 700, y: 58))
+        #expect(PetPlacement.origin(for: droppedInFullScreen, on: laptop, dockShown: false, petSize: Self.petSize)
+            == bottom)
+        // Put beside a Dock the user could see, it stays put.
+        #expect(PetPlacement.origin(for: droppedBesideDock, on: laptop, dockShown: true, petSize: Self.petSize)
+            == bottom)
+    }
+
+    /// Positions saved before the Dock was recorded still decode, and stay put.
+    @Test func positionsSavedBeforeTheDockWasRecordedStayPut() throws {
+        let json = """
+        {"displayUUID":"display-1","displayID":1,"displayName":"Display 1","visibleWidth":1512,
+         "visibleHeight":949,"fractionX":0.5,"fractionY":0}
+        """
+        let saved = try JSONDecoder().decode(PetPosition.self, from: Data(json.utf8))
+        let laptop = screen(
+            1, CGRect(x: 0, y: 0, width: 1512, height: 949),
+            clearOfDock: CGRect(x: 0, y: 58, width: 1512, height: 890)
+        )
+
+        #expect(saved.droppedWhileDockHidden == nil)
+        #expect(PetPlacement.origin(for: saved, on: laptop, dockShown: true, petSize: Self.petSize).y == 0)
+    }
+
+    /// The Dock's window is on screen while it shows and leaves in a full-screen
+    /// Space. Other levels are the Dock's passing effects, and a Dock on another
+    /// display does not cover this one.
+    @Test func theDockShowsWhileItsWindowIsOnScreen() {
+        let display = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let dockWindow = PetWindow(ownerPID: 500, layer: 20, bounds: display)
+        let fullScreenApp = PetWindow(ownerPID: 900, layer: 0, bounds: CGRect(x: 0, y: 33, width: 1512, height: 949))
+
+        #expect(PetPlacement.dockShows(on: display, among: [fullScreenApp, dockWindow], dockPID: 500, dockLevel: 20))
+        #expect(!PetPlacement.dockShows(on: display, among: [fullScreenApp], dockPID: 500, dockLevel: 20))
+        #expect(!PetPlacement.dockShows(
+            on: display, among: [PetWindow(ownerPID: 500, layer: 27, bounds: display)], dockPID: 500, dockLevel: 20
+        ))
+        #expect(!PetPlacement.dockShows(
+            on: display,
+            among: [PetWindow(ownerPID: 500, layer: 20, bounds: CGRect(x: 1512, y: -200, width: 2560, height: 1440))],
+            dockPID: 500, dockLevel: 20
+        ))
     }
 }

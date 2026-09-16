@@ -11,6 +11,17 @@ nonisolated struct PetScreen: Equatable {
     let name: String?
     /// Where the pet may go on this display, from `PetPlacement.workingArea`.
     let workingArea: CGRect
+    /// The part of the working area the Dock leaves free: the display's visible
+    /// frame. It still describes the Dock while the Dock hides for a full-screen
+    /// Space, since an app in the background keeps being told the Dock is there.
+    let clearOfDock: CGRect
+}
+
+/// One on-screen window, reduced to what telling whether the Dock shows needs.
+nonisolated struct PetWindow: Equatable {
+    let ownerPID: Int32
+    let layer: Int
+    let bounds: CGRect
 }
 
 /// Where the user left the pet.
@@ -38,7 +49,13 @@ nonisolated struct PetPosition: Codable, Equatable {
     var fractionX: Double
     var fractionY: Double
 
-    init(petOrigin: CGPoint, petSize: CGSize, screen: PetScreen) {
+    /// Whether the Dock was hidden when the pet was dropped here, as it is in a
+    /// full-screen Space. Such a pet is lifted clear of the Dock while the Dock
+    /// shows, whereas one dropped beside a Dock the user could see stays where it
+    /// was put. `nil` for positions saved before this was recorded.
+    var droppedWhileDockHidden: Bool?
+
+    init(petOrigin: CGPoint, petSize: CGSize, screen: PetScreen, dockHidden: Bool = false) {
         displayUUID = screen.displayUUID
         displayID = screen.displayID
         displayName = screen.name
@@ -50,6 +67,19 @@ nonisolated struct PetPosition: Codable, Equatable {
         let spanY = max(area.height - petSize.height, 1)
         fractionX = PetPlacement.clampUnit(Double((petOrigin.x - area.minX) / spanX))
         fractionY = PetPlacement.clampUnit(Double((petOrigin.y - area.minY) / spanY))
+        droppedWhileDockHidden = dockHidden
+    }
+
+    /// The same place, in the same corner and with the same record of the Dock,
+    /// filed under another display.
+    func onDisplay(_ screen: PetScreen) -> PetPosition {
+        var moved = self
+        moved.displayUUID = screen.displayUUID
+        moved.displayID = screen.displayID
+        moved.displayName = screen.name
+        moved.visibleWidth = screen.workingArea.width
+        moved.visibleHeight = screen.workingArea.height
+        return moved
     }
 }
 
@@ -75,7 +105,8 @@ nonisolated enum PetPlacement {
         )
     }
 
-    /// Bottom-right corner of the working area.
+    /// Bottom-right corner of `area` — for a pet never moved, the part of the
+    /// display clear of the Dock.
     static func defaultOrigin(in area: CGRect, petSize: CGSize) -> CGPoint {
         clamp(
             CGPoint(
@@ -116,11 +147,32 @@ nonisolated enum PetPlacement {
         previous == 1 && current > 1
     }
 
-    /// Where the pet lands on the main display: in the corner it was left in on
-    /// whichever display that was, or the default corner if it was never moved.
-    static func originOnMainDisplay(_ main: PetScreen, stored: PetPosition?, petSize: CGSize) -> CGPoint {
-        guard let stored else { return defaultOrigin(in: main.workingArea, petSize: petSize) }
-        return origin(for: stored, in: main.workingArea, petSize: petSize)
+    /// Where a stored position shows on its display at this moment.
+    ///
+    /// A pet dropped while the Dock was hidden — in a full-screen Space, say — is
+    /// lifted clear of the Dock while the Dock shows, and goes back to where it
+    /// was dropped once the Dock hides again. The stored position itself never
+    /// moves.
+    static func origin(
+        for position: PetPosition,
+        on screen: PetScreen,
+        dockShown: Bool,
+        petSize: CGSize
+    ) -> CGPoint {
+        let dropped = origin(for: position, in: screen.workingArea, petSize: petSize)
+        guard position.droppedWhileDockHidden == true, dockShown else { return dropped }
+        return clamp(dropped, in: screen.clearOfDock, petSize: petSize)
+    }
+
+    /// Whether the Dock shows on a display: its window is on screen there. It
+    /// leaves the screen while the Dock hides for a full-screen Space.
+    static func dockShows(
+        on display: CGRect,
+        among windows: [PetWindow],
+        dockPID: Int32,
+        dockLevel: Int
+    ) -> Bool {
+        windows.contains { $0.ownerPID == dockPID && $0.layer == dockLevel && $0.bounds.intersects(display) }
     }
 
     /// Finds the display a stored position belongs to.

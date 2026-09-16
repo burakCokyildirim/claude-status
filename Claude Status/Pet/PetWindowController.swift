@@ -488,6 +488,14 @@ final class PetWindowController: NSObject {
             DispatchQueue.main.async { self?.reduceMotionDidChange() }
         })
 
+        workspaceObservers.append(workspaceCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            DispatchQueue.main.async { self?.activeSpaceDidChange() }
+        })
+
         defaultObservers.append(NotificationCenter.default.addObserver(
             forName: NSWindow.didChangeOcclusionStateNotification,
             object: panel,
@@ -518,6 +526,21 @@ final class PetWindowController: NSObject {
         }
     }
 
+    /// The active Space changed. Leaving a full-screen Space brings the Dock back
+    /// over a pet that was dropped while it was hidden, and entering one lets
+    /// that pet return to its place. The Dock takes a moment to come and go, so
+    /// the pet is placed once quickly and again after it has settled.
+    private func activeSpaceDidChange() {
+        screenChangeGeneration += 1
+        let generation = screenChangeGeneration
+        for delay in [0.35, 1.2] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, self.screenChangeGeneration == generation, !self.isDragging else { return }
+                self.reclampIntoVisibleArea()
+            }
+        }
+    }
+
     /// Brings the pet back into a working area.
     ///
     /// A monitor plugged into a Mac that had one display takes the pet to the
@@ -533,22 +556,30 @@ final class PetWindowController: NSObject {
 
         if PetPlacement.movesToMainDisplay(fromDisplayCount: previousDisplayCount, to: screens.count),
            let main = screens.first {
-            let origin = PetPlacement.originOnMainDisplay(
-                main, stored: PetSettings.savedPosition(), petSize: rect.size
-            )
-            movePet(to: origin)
-            PetSettings.savePosition(PetPosition(petOrigin: origin, petSize: rect.size, screen: main))
+            let moved = PetSettings.savedPosition()?.onDisplay(main)
+                ?? PetPosition(
+                    petOrigin: PetPlacement.defaultOrigin(in: main.clearOfDock, petSize: rect.size),
+                    petSize: rect.size,
+                    screen: main
+                )
+            PetSettings.savePosition(moved)
+            movePet(to: PetPlacement.origin(
+                for: moved, on: main, dockShown: Self.isDockShown(on: main), petSize: rect.size
+            ))
             return
         }
 
         if let stored = PetSettings.savedPosition(),
            let screen = PetPlacement.resolveScreen(for: stored, among: screens) {
-            movePet(to: PetPlacement.origin(for: stored, in: screen.workingArea, petSize: rect.size))
+            movePet(to: PetPlacement.origin(
+                for: stored, on: screen, dockShown: Self.isDockShown(on: screen), petSize: rect.size
+            ))
             return
         }
 
-        let area = Self.screen(holding: rect, among: screens)?.workingArea
-            ?? screens.first?.workingArea
+        // Never moved: the default corner is clear of the Dock, and stays so.
+        let area = Self.screen(holding: rect, among: screens)?.clearOfDock
+            ?? screens.first?.clearOfDock
             ?? .zero
         movePet(to: PetPlacement.clamp(rect.origin, in: area, petSize: rect.size))
     }
@@ -635,9 +666,9 @@ final class PetWindowController: NSObject {
 
         let clamped = PetPlacement.clamp(rect.origin, in: screen.workingArea, petSize: rect.size)
         movePet(to: clamped)
-        PetSettings.savePosition(
-            PetPosition(petOrigin: clamped, petSize: rect.size, screen: screen)
-        )
+        PetSettings.savePosition(PetPosition(
+            petOrigin: clamped, petSize: rect.size, screen: screen, dockHidden: !Self.isDockShown(on: screen)
+        ))
     }
 
     // MARK: - Context Menu
@@ -689,7 +720,7 @@ final class PetWindowController: NSObject {
     @objc private func resetPosition() {
         PetSettings.clearPosition()
         let petSize = PetLayout.petSize(scale: settings.size.scale)
-        let area = Self.currentScreens().first?.workingArea ?? .zero
+        let area = Self.currentScreens().first?.clearOfDock ?? .zero
         movePet(to: PetPlacement.defaultOrigin(in: area, petSize: petSize))
     }
 
@@ -772,17 +803,17 @@ final class PetWindowController: NSObject {
         settledDisplayCount = screens.count
 
         guard let stored = PetSettings.savedPosition() else {
-            let area = screens.first?.workingArea ?? .zero
+            let area = screens.first?.clearOfDock ?? .zero
             movePet(to: PetPlacement.defaultOrigin(in: area, petSize: petSize))
             return
         }
 
         // A stored display that is gone falls back to the main screen, which puts
         // the pet in the equivalent corner rather than nowhere.
-        let area = PetPlacement.resolveScreen(for: stored, among: screens)?.workingArea
-            ?? screens.first?.workingArea
-            ?? .zero
-        movePet(to: PetPlacement.origin(for: stored, in: area, petSize: petSize))
+        guard let screen = PetPlacement.resolveScreen(for: stored, among: screens) ?? screens.first else { return }
+        movePet(to: PetPlacement.origin(
+            for: stored, on: screen, dockShown: Self.isDockShown(on: screen), petSize: petSize
+        ))
     }
 
     /// The attached displays, reduced to what placement needs. The first is the
@@ -797,9 +828,39 @@ final class PetWindowController: NSObject {
                 displayUUID: displayUUID(for: displayID),
                 displayID: displayID,
                 name: screen.localizedName,
-                workingArea: PetPlacement.workingArea(frame: screen.frame, visibleFrame: screen.visibleFrame)
+                workingArea: PetPlacement.workingArea(frame: screen.frame, visibleFrame: screen.visibleFrame),
+                clearOfDock: screen.visibleFrame
             )
         }
+    }
+
+    /// Whether the Dock is showing on a display right now.
+    ///
+    /// `NSScreen` cannot say: an app in the background is still given the Dock's
+    /// room in `visibleFrame` while a full-screen Space hides it. The Dock's own
+    /// window can, since it leaves the screen then. Reading the window list needs
+    /// no permission. Without a Dock to find, the answer is that it shows, which
+    /// only ever keeps the pet clear of where the Dock would be.
+    private static func isDockShown(on screen: PetScreen) -> Bool {
+        guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first,
+              let list = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] else {
+            return true
+        }
+        let windows = list.compactMap { info -> PetWindow? in
+            guard let pid = info[kCGWindowOwnerPID as String] as? Int32,
+                  let layer = info[kCGWindowLayer as String] as? Int,
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: bounds) else {
+                return nil
+            }
+            return PetWindow(ownerPID: pid, layer: layer, bounds: rect)
+        }
+        return PetPlacement.dockShows(
+            on: CGDisplayBounds(screen.displayID),
+            among: windows,
+            dockPID: dock.processIdentifier,
+            dockLevel: Int(CGWindowLevelForKey(.dockWindow))
+        )
     }
 
     /// The display's stable UUID string. Unlike the display ID, this survives a
