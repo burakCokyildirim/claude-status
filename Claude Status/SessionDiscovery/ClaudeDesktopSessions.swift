@@ -10,6 +10,13 @@ struct ClaudeDesktopSession: Equatable {
     /// When the session was last opened in the app, or `nil` for the records
     /// that carry no stamp at all.
     let lastFocusedAt: Double?
+    let isArchived: Bool
+}
+
+/// A desktop session as it was last seen running, and the transcript it writes to.
+private struct RunningSession: Codable {
+    let session: ClaudeSession
+    let transcript: URL
 }
 
 /// Reads the Claude desktop app's own bookkeeping: how Claude Status learns a
@@ -24,6 +31,9 @@ struct ClaudeDesktopSessionStore {
 
     /// Where our own "you have seen this" marks live, in the App Group.
     static let seenKey = "claudeDesktopSeenAt"
+
+    /// Where the sessions with an unread answer are saved, as last seen running.
+    static let unreadSessionsKey = "claudeDesktopUnreadSessions"
 
     /// Both names the desktop app has used for its support directory.
     static var defaultRoots: [URL] {
@@ -54,6 +64,9 @@ struct ClaudeDesktopSessionStore {
     /// When Claude last answered, keyed by our session ID, with the transcript
     /// state it was read from.
     private var answers: [String: (transcript: URL, size: Int, modified: Date, answeredAt: Date?)] = [:]
+    /// Desktop sessions as last seen running, keyed by our session ID.
+    private var lastRunning: [String: RunningSession]
+    private var savedUnreadIds: Set<String>
     private var lastScan: Date = .distantPast
 
     init(
@@ -70,6 +83,8 @@ struct ClaudeDesktopSessionStore {
         self.focusLog = focusLog
         self.isDesktopAppInFront = isDesktopAppInFront
         self.seenAt = Self.loadSeen(from: defaults)
+        self.lastRunning = Self.loadUnreadSessions(from: defaults)
+        self.savedUnreadIds = Set(lastRunning.keys)
     }
 
     /// The desktop app's record for the session the hook reports as `cliSessionId`.
@@ -295,6 +310,82 @@ struct ClaudeDesktopSessionStore {
         return stored.compactMapValues { ($0 as? NSNumber)?.doubleValue }
     }
 
+    // MARK: - Stopped
+
+    /// The transcript of the session a hook status file belongs to: the hook
+    /// names its file after the transcript it sits beside.
+    static func transcript(beside cstatusFile: URL) -> URL {
+        cstatusFile.deletingPathExtension().appendingPathExtension("jsonl")
+    }
+
+    /// Desktop sessions whose process has stopped with an answer still unread.
+    ///
+    /// The desktop app evicts idle sessions' processes once it has too many open
+    /// — often a minute or two after the user clicks away from one — or after
+    /// half an hour untouched, and stops every one when it quits. The hook's `.cstatus` goes with the process, so
+    /// an answer nobody has read would drop off the list just when it matters.
+    /// What is kept is the session as last seen running, for as long as the
+    /// running rule would still call it unread: it had finished its turn, it
+    /// is not archived, and nobody has looked since. A session never seen
+    /// running is not guessed at — applying the rule to every record instead
+    /// raised sessions from weeks ago that the app does not show as unread.
+    mutating func stoppedUnread(
+        running: [ClaudeSession],
+        cstatusFiles: [String: URL],
+        projectsDirectories: [URL]
+    ) -> [ClaudeSession] {
+        for session in running {
+            if session.source == .claudeDesktop, let file = cstatusFiles[session.sessionId] {
+                lastRunning[session.sessionId] = RunningSession(
+                    session: session, transcript: Self.transcript(beside: file)
+                )
+            } else {
+                lastRunning[session.sessionId] = nil
+            }
+        }
+        // A scan that lists no records can say nothing about any of them.
+        guard !byCLISessionId.isEmpty else { return [] }
+        let runningIds = Set(running.map(\.sessionId))
+        var stopped: [ClaudeSession] = []
+        for (id, last) in lastRunning where !runningIds.contains(id) {
+            let tracked = projectsDirectories.contains { last.transcript.path.hasPrefix($0.path + "/") }
+            guard tracked,
+                  last.session.state == .idle,
+                  byCLISessionId[id]?.isArchived == false,
+                  isUnread(source: .claudeDesktop, hookState: .idle, cliSessionId: id, transcript: last.transcript)
+            else {
+                lastRunning[id] = nil
+                continue
+            }
+            var session = last.session
+            session.isUnread = true
+            stopped.append(session)
+        }
+        saveUnreadSessions(lastRunning.values.filter {
+            !runningIds.contains($0.session.sessionId) || $0.session.isUnread == true
+        })
+        return stopped.sorted { $0.sessionId < $1.sessionId }
+    }
+
+    /// Saves the sessions with an unread answer, running or not, so a relaunch
+    /// still shows the ones the app stops meanwhile. Written only when that set
+    /// changes.
+    private mutating func saveUnreadSessions(_ sessions: [RunningSession]) {
+        let ids = Set(sessions.map(\.session.sessionId))
+        guard ids != savedUnreadIds else { return }
+        savedUnreadIds = ids
+        let sorted = sessions.sorted { $0.session.sessionId < $1.session.sessionId }
+        defaults?.set(try? JSONEncoder().encode(sorted), forKey: Self.unreadSessionsKey)
+    }
+
+    private static func loadUnreadSessions(from defaults: UserDefaults?) -> [String: RunningSession] {
+        guard let data = defaults?.data(forKey: unreadSessionsKey),
+              let saved = try? JSONDecoder().decode([RunningSession].self, from: data) else {
+            return [:]
+        }
+        return Dictionary(saved.map { ($0.session.sessionId, $0) }) { _, newer in newer }
+    }
+
     // MARK: - Records
 
     private func recordFiles() -> [URL] {
@@ -326,7 +417,8 @@ struct ClaudeDesktopSessionStore {
         return (cliSessionId, ClaudeDesktopSession(
             sessionId: sessionId,
             lastActivityAt: (json["lastActivityAt"] as? NSNumber)?.doubleValue ?? 0,
-            lastFocusedAt: (json["lastFocusedAt"] as? NSNumber)?.doubleValue
+            lastFocusedAt: (json["lastFocusedAt"] as? NSNumber)?.doubleValue,
+            isArchived: json["isArchived"] as? Bool ?? false
         ))
     }
 }

@@ -56,6 +56,9 @@ struct SessionDiscovery {
                 cstatusFiles[record.sessionId] = record.fileURL
             }
         }
+        sessions += desktopSessions.stoppedUnread(
+            running: sessions, cstatusFiles: cstatusFiles, projectsDirectories: profiles.map(\.projectsDirectory)
+        )
         return DiscoveryResult(sessions: sessions, cstatusFiles: cstatusFiles)
     }
 
@@ -81,6 +84,9 @@ struct SessionDiscovery {
             sessions.append(assembleSession(from: record, profileName: profileName(for: url, in: profiles)))
             cstatusFiles[record.sessionId] = record.fileURL
         }
+        sessions += desktopSessions.stoppedUnread(
+            running: sessions, cstatusFiles: cstatusFiles, projectsDirectories: profiles.map(\.projectsDirectory)
+        )
         return DiscoveryResult(sessions: sessions, cstatusFiles: cstatusFiles)
     }
 
@@ -189,8 +195,7 @@ struct SessionDiscovery {
             source: source,
             hookState: record.state,
             cliSessionId: record.sessionId,
-            // The hook names its file after the transcript it sits beside.
-            transcript: record.fileURL.deletingPathExtension().appendingPathExtension("jsonl")
+            transcript: ClaudeDesktopSessionStore.transcript(beside: record.fileURL)
         )
         let projectName = (record.cwd as NSString).lastPathComponent
 

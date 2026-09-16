@@ -19,6 +19,7 @@ struct ClaudeDesktopTests {
         let cliId: String
         var lastActivityAt: Double = 1_000
         var lastFocusedAt: Double? = 2_000
+        var isArchived = false
     }
 
     /// Lays out `<root>/<account>/<organization>/local_<id>.json` the way the
@@ -40,6 +41,7 @@ struct ClaudeDesktopTests {
                 "lastActivityAt": record.lastActivityAt
             ]
             if let focused = record.lastFocusedAt { json["lastFocusedAt"] = focused }
+            if record.isArchived { json["isArchived"] = true }
             try JSONSerialization.data(withJSONObject: json)
                 .write(to: organization.appendingPathComponent("\(record.desktopId).json"))
         }
@@ -397,6 +399,148 @@ struct ClaudeDesktopTests {
             source: .claudeDesktop, hookState: .idle, cliSessionId: "cli-woken", transcript: transcript
         )
         #expect(answered)
+    }
+
+    // MARK: - Stopped sessions
+
+    /// A desktop session as discovery reports it while its process runs, filed
+    /// under a throwaway `projects/` directory beside a transcript whose last
+    /// answer landed at `answeredAt`.
+    private func makeRunningSession(
+        _ cliSessionId: String,
+        answeredAt: Double,
+        state: SessionState = .idle,
+        isUnread: Bool = true
+    ) throws -> (session: ClaudeSession, cstatusFile: URL, projects: URL) {
+        let projects = FileManager.default.temporaryDirectory
+            .appendingPathComponent("projects-\(UUID().uuidString)")
+        let project = projects.appendingPathComponent("-tmp-project")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let cstatusFile = project.appendingPathComponent("\(cliSessionId).cstatus")
+        try (transcriptLine("assistant", at: answeredAt) + "\n").write(
+            to: ClaudeDesktopSessionStore.transcript(beside: cstatusFile), atomically: true, encoding: .utf8
+        )
+        let session = ClaudeSession(
+            sessionId: cliSessionId, pid: 4242, workingDirectory: "/tmp/project", projectName: "project",
+            state: state, lastActivityAt: at(answeredAt), iTermSessionId: nil, tmuxPaneId: nil, tmuxSocket: nil,
+            source: .claudeDesktop, activity: "", sessionName: nil, isUnread: isUnread
+        )
+        return (session, cstatusFile, projects)
+    }
+
+    /// The desktop app stops an idle session's process a minute or two after the
+    /// user clicks away, and the hook's file goes with it. An answer nobody has
+    /// read has to stay listed all the same.
+    @Test func anUnreadSessionStaysListedAfterItsProcessStops() throws {
+        let root = try makeSessionsRoot([
+            Record(desktopId: "local_gone", cliId: "cli-gone", lastActivityAt: 3_000, lastFocusedAt: 2_000)
+        ])
+        let gone = try makeRunningSession("cli-gone", answeredAt: 3_000)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: gone.projects)
+        }
+        var store = ClaudeDesktopSessionStore(roots: [root], defaults: makeDefaults()) { false }
+        store.refresh(force: true, now: at(4_000))
+
+        let whileRunning = store.stoppedUnread(
+            running: [gone.session], cstatusFiles: ["cli-gone": gone.cstatusFile],
+            projectsDirectories: [gone.projects]
+        )
+        let afterStopping = store.stoppedUnread(running: [], cstatusFiles: [:], projectsDirectories: [gone.projects])
+
+        #expect(whileRunning.isEmpty)
+        #expect(afterStopping == [gone.session])
+    }
+
+    /// It stays only until it is read: opening the session stamps its record.
+    @Test func aStoppedSessionLeavesOnceItIsRead() throws {
+        let root = try makeSessionsRoot([
+            Record(desktopId: "local_gone", cliId: "cli-gone", lastActivityAt: 3_000, lastFocusedAt: 2_000)
+        ])
+        let gone = try makeRunningSession("cli-gone", answeredAt: 3_000)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: gone.projects)
+        }
+        var store = ClaudeDesktopSessionStore(roots: [root], defaults: makeDefaults()) { false }
+        store.refresh(force: true, now: at(4_000))
+        _ = store.stoppedUnread(
+            running: [gone.session], cstatusFiles: ["cli-gone": gone.cstatusFile],
+            projectsDirectories: [gone.projects]
+        )
+        let beforeReading = store.stoppedUnread(running: [], cstatusFiles: [:], projectsDirectories: [gone.projects])
+
+        try write(
+            [Record(desktopId: "local_gone", cliId: "cli-gone", lastActivityAt: 3_000, lastFocusedAt: 5_000)],
+            into: root, account: "account"
+        )
+        store.refresh(force: true, now: at(6_000))
+        let afterReading = store.stoppedUnread(running: [], cstatusFiles: [:], projectsDirectories: [gone.projects])
+
+        #expect(beforeReading.count == 1)
+        #expect(afterReading.isEmpty)
+    }
+
+    /// Nothing is kept without a finished answer to read, as when the process
+    /// stopped mid-turn, or once the user has put the session away: archived in
+    /// the app, or in a profile that is no longer tracked.
+    @Test func onlyAFinishedAnswerInATrackedSessionIsKept() throws {
+        let root = try makeSessionsRoot([
+            Record(desktopId: "local_busy", cliId: "cli-busy", lastActivityAt: 3_000, lastFocusedAt: 2_000),
+            Record(
+                desktopId: "local_archived", cliId: "cli-archived", lastActivityAt: 3_000, lastFocusedAt: 2_000,
+                isArchived: true
+            ),
+            Record(desktopId: "local_untracked", cliId: "cli-untracked", lastActivityAt: 3_000, lastFocusedAt: 2_000)
+        ])
+        let busy = try makeRunningSession("cli-busy", answeredAt: 3_000, state: .active, isUnread: false)
+        let archived = try makeRunningSession("cli-archived", answeredAt: 3_000)
+        let untracked = try makeRunningSession("cli-untracked", answeredAt: 3_000)
+        let running = [busy, archived, untracked]
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            for made in running { try? FileManager.default.removeItem(at: made.projects) }
+        }
+        var store = ClaudeDesktopSessionStore(roots: [root], defaults: makeDefaults()) { false }
+        store.refresh(force: true, now: at(4_000))
+        _ = store.stoppedUnread(
+            running: running.map { $0.session },
+            cstatusFiles: Dictionary(uniqueKeysWithValues: running.map { ($0.session.sessionId, $0.cstatusFile) }),
+            projectsDirectories: running.map { $0.projects }
+        )
+
+        let stopped = store.stoppedUnread(
+            running: [], cstatusFiles: [:], projectsDirectories: [busy.projects, archived.projects]
+        )
+
+        #expect(stopped.isEmpty)
+    }
+
+    /// A relaunch keeps them — including a session still running when Claude
+    /// Status quit, and stopped before it started again.
+    @Test func unreadSessionsOutliveARelaunch() throws {
+        let root = try makeSessionsRoot([
+            Record(desktopId: "local_gone", cliId: "cli-gone", lastActivityAt: 3_000, lastFocusedAt: 2_000)
+        ])
+        let gone = try makeRunningSession("cli-gone", answeredAt: 3_000)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: gone.projects)
+        }
+        let defaults = makeDefaults()
+        var store = ClaudeDesktopSessionStore(roots: [root], defaults: defaults) { false }
+        store.refresh(force: true, now: at(4_000))
+        _ = store.stoppedUnread(
+            running: [gone.session], cstatusFiles: ["cli-gone": gone.cstatusFile],
+            projectsDirectories: [gone.projects]
+        )
+
+        var relaunched = ClaudeDesktopSessionStore(roots: [root], defaults: defaults) { false }
+        relaunched.refresh(force: true, now: at(5_000))
+        let stopped = relaunched.stoppedUnread(running: [], cstatusFiles: [:], projectsDirectories: [gone.projects])
+
+        #expect(stopped == [gone.session])
     }
 
     // MARK: - Transcript
