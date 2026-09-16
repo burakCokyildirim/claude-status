@@ -51,6 +51,9 @@ struct ClaudeDesktopSessionStore {
     /// Epoch milliseconds, keyed by our session ID: when the user was last
     /// watching that session.
     private var seenAt: [String: Double]
+    /// When Claude last answered, keyed by our session ID, with the transcript
+    /// state it was read from.
+    private var answers: [String: (transcript: URL, size: Int, modified: Date, answeredAt: Date?)] = [:]
     private var lastScan: Date = .distantPast
 
     init(
@@ -112,6 +115,11 @@ struct ClaudeDesktopSessionStore {
         }
         cache = refreshed
         byCLISessionId = index
+        // Like the marks, answers go with sessions the app has dropped, and are
+        // kept through a scan that lists nothing.
+        if !index.isEmpty {
+            answers = answers.filter { index[$0.key] != nil }
+        }
     }
 
     /// Whether the desktop app has output here the user has not seen.
@@ -122,22 +130,103 @@ struct ClaudeDesktopSessionStore {
     /// unread is not the same claim as "blocked on you", which is what the hook's
     /// own waiting state means.
     ///
-    /// When Claude spoke comes from the hook's `.cstatus` timestamp, not from the
-    /// record's `lastActivityAt`: the desktop app throttles that field and can
-    /// leave it an hour behind, which would hold the answer back.
-    func isUnread(
+    /// When Claude spoke comes from the session's transcript, the one place that
+    /// records answers and nothing else. The record's `lastActivityAt` is
+    /// throttled by the desktop app and can sit an hour behind, which would hold
+    /// the answer back. The hook's `.cstatus` timestamp moves for more than
+    /// answers: the app starts a session's process whenever the session is
+    /// clicked, and can evict it again a minute later, and every start rewrites
+    /// that file — so a session the user merely passed over would come back
+    /// unread each time.
+    mutating func isUnread(
         source: SessionSource,
         hookState: SessionState,
         cliSessionId: String,
-        lastSpokeAt: Date
+        transcript: URL
     ) -> Bool {
         guard source == .claudeDesktop,
               hookState == .idle,
               let record = byCLISessionId[cliSessionId],
-              let seen = lastSeen(cliSessionId, record: record) else {
+              let seen = lastSeen(cliSessionId, record: record),
+              let answeredAt = lastAnswer(cliSessionId, in: transcript) else {
             return false
         }
-        return lastSpokeAt.timeIntervalSince1970 * 1000 > seen
+        return answeredAt.timeIntervalSince1970 * 1000 > seen
+    }
+
+    // MARK: - Answers
+
+    /// A turn's last answer is followed by bookkeeping — attachments, file
+    /// snapshots, titles — so the transcript is read from the end in growing
+    /// steps. Across 299 transcripts on the test machine the answer sat a median
+    /// of 3 KB from the end and never more than 185 KB; one further back than the
+    /// last step counts as no answer rather than a read of the whole file.
+    private static let tailSizes: [UInt64] = [64_000, 256_000, 1_024_000]
+
+    private static let assistantMarker = Data(#""assistant""#.utf8)
+
+    /// The last answer in one session's transcript, read again only when the
+    /// file changes.
+    private mutating func lastAnswer(_ cliSessionId: String, in transcript: URL) -> Date? {
+        // A URL keeps the values it looked up, which would hide the file growing.
+        var file = transcript
+        file.removeAllCachedResourceValues()
+        let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        guard let size = values?.fileSize, let modified = values?.contentModificationDate else {
+            return nil
+        }
+        if let cached = answers[cliSessionId], cached.transcript == transcript,
+           cached.size == size, cached.modified == modified {
+            return cached.answeredAt
+        }
+        let answeredAt = Self.lastAnswer(in: transcript)
+        answers[cliSessionId] = (transcript, size, modified, answeredAt)
+        return answeredAt
+    }
+
+    /// When Claude last answered in a Claude Code transcript: the timestamp of
+    /// its last assistant line, or `nil` when there is none to find.
+    ///
+    /// Two kinds of assistant line are not answers. Subagents write their own
+    /// (`isSidechain`). And a session resumed after a turn was cut off gets a
+    /// placeholder from Claude Code itself, under the model `<synthetic>`, the
+    /// moment the app starts it. The same model marks API errors, which do end a
+    /// turn the user needs to see, so those still count.
+    static func lastAnswer(in transcript: URL) -> Date? {
+        guard let handle = try? FileHandle(forReadingFrom: transcript) else { return nil }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return nil }
+        for tailSize in tailSizes {
+            let start = size > tailSize ? size - tailSize : 0
+            guard (try? handle.seek(toOffset: start)) != nil,
+                  let tail = try? handle.readToEnd() else {
+                return nil
+            }
+            // Unless the read begins the file, its first line is cut off.
+            for line in tail.split(separator: UInt8(ascii: "\n")).dropFirst(start == 0 ? 0 : 1).reversed() {
+                if let answeredAt = answerDate(line) { return answeredAt }
+            }
+            if start == 0 { return nil }
+        }
+        return nil
+    }
+
+    /// The time on one transcript line, when that line is an answer.
+    private static func answerDate(_ line: Data) -> Date? {
+        // Most lines are not; those are skipped without being parsed.
+        guard line.range(of: assistantMarker) != nil,
+              let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              json["type"] as? String == "assistant",
+              json["isSidechain"] as? Bool != true,
+              let timestamp = json["timestamp"] as? String else {
+            return nil
+        }
+        let model = (json["message"] as? [String: Any])?["model"] as? String
+        if model == "<synthetic>", json["isApiErrorMessage"] as? Bool != true {
+            return nil
+        }
+        return (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(timestamp))
+            ?? (try? Date.ISO8601FormatStyle().parse(timestamp))
     }
 
     // MARK: - Seen

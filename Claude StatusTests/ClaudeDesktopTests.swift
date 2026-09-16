@@ -68,16 +68,53 @@ struct ClaudeDesktopTests {
         ])
     }
 
+    /// Whether the store calls the session unread when Claude's last answer in
+    /// its transcript landed at `spokeAt`.
     private func unread(
-        _ store: ClaudeDesktopSessionStore,
+        _ store: inout ClaudeDesktopSessionStore,
         _ cliSessionId: String,
         spokeAt: Double,
         hookState: SessionState = .idle,
         source: SessionSource = .claudeDesktop
-    ) -> Bool {
-        store.isUnread(
-            source: source, hookState: hookState, cliSessionId: cliSessionId, lastSpokeAt: at(spokeAt)
+    ) throws -> Bool {
+        let transcript = try makeTranscript([transcriptLine("assistant", at: spokeAt)])
+        defer { try? FileManager.default.removeItem(at: transcript) }
+        return store.isUnread(
+            source: source, hookState: hookState, cliSessionId: cliSessionId, transcript: transcript
         )
+    }
+
+    /// A Claude Code transcript made of `lines`, under a throwaway name.
+    private func makeTranscript(_ lines: [String]) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("transcript-\(UUID().uuidString).jsonl")
+        try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    /// One transcript line the way Claude Code writes it: compact JSON, stamped
+    /// in UTC to the millisecond.
+    private func transcriptLine(
+        _ type: String,
+        at milliseconds: Double,
+        model: String = "claude-opus-5",
+        text: String = "Done.",
+        _ fields: [String: Any] = [:]
+    ) throws -> String {
+        var message: [String: Any] = ["role": type, "content": [["type": "text", "text": text]]]
+        if type == "assistant" { message["model"] = model }
+        var json = fields
+        json["type"] = type
+        json["timestamp"] = at(milliseconds).formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
+        json["message"] = message
+        return String(decoding: try JSONSerialization.data(withJSONObject: json), as: UTF8.self)
+    }
+
+    private func append(line: String, to url: URL) throws {
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((line + "\n").utf8))
     }
 
     // MARK: - Records
@@ -112,7 +149,7 @@ struct ClaudeDesktopTests {
         #expect(store.session(forCLISession: "cli-dup")?.sessionId == "local_fresh")
     }
 
-    @Test func survivesRootsThatAreNotThere() {
+    @Test func survivesRootsThatAreNotThere() throws {
         var store = ClaudeDesktopSessionStore(
             roots: [URL(fileURLWithPath: "/nope/claude-code-sessions")],
             defaults: makeDefaults(),
@@ -121,7 +158,7 @@ struct ClaudeDesktopTests {
         store.refresh(force: true)
 
         #expect(store.session(forCLISession: "cli-one") == nil)
-        #expect(!unread(store, "cli-one", spokeAt: 5_000))
+        #expect(try !unread(&store, "cli-one", spokeAt: 5_000))
     }
 
     // MARK: - Unread
@@ -134,13 +171,13 @@ struct ClaudeDesktopTests {
         var store = ClaudeDesktopSessionStore(roots: [root], defaults: makeDefaults()) { false }
         store.refresh(force: true, now: at(9_600))
 
-        #expect(unread(store, "cli-away", spokeAt: 3_000))
+        #expect(try unread(&store, "cli-away", spokeAt: 3_000))
         // A session still working, one running anywhere else, and one the app has
         // no record of are never called unread.
-        #expect(!unread(store, "cli-away", spokeAt: 3_000, hookState: .active))
-        #expect(!unread(store, "cli-away", spokeAt: 3_000, hookState: .compacting))
-        #expect(!unread(store, "cli-away", spokeAt: 3_000, source: .terminal(app: "Terminal")))
-        #expect(!unread(store, "cli-none", spokeAt: 3_000))
+        #expect(try !unread(&store, "cli-away", spokeAt: 3_000, hookState: .active))
+        #expect(try !unread(&store, "cli-away", spokeAt: 3_000, hookState: .compacting))
+        #expect(try !unread(&store, "cli-away", spokeAt: 3_000, source: .terminal(app: "Terminal")))
+        #expect(try !unread(&store, "cli-none", spokeAt: 3_000))
     }
 
     /// Reading a session must not turn it into a notice about itself, however old
@@ -157,9 +194,9 @@ struct ClaudeDesktopTests {
         ) { true }
         store.refresh(force: true, now: at(10_000))
 
-        #expect(!unread(store, "cli-open", spokeAt: 9_500))
+        #expect(try !unread(&store, "cli-open", spokeAt: 9_500))
         // The session in the background is still unread.
-        #expect(unread(store, "cli-away", spokeAt: 3_000))
+        #expect(try unread(&store, "cli-away", spokeAt: 3_000))
     }
 
     /// The bug this whole signal kept getting wrong: the Claude app is in front,
@@ -178,7 +215,7 @@ struct ClaudeDesktopTests {
         ) { true }
         store.refresh(force: true, now: at(10_000))
 
-        #expect(unread(store, "cli-open", spokeAt: 9_500))
+        #expect(try unread(&store, "cli-open", spokeAt: 9_500))
     }
 
     /// Watching the answer arrive and then leaving must leave the session quiet:
@@ -199,7 +236,7 @@ struct ClaudeDesktopTests {
         inFront = false
         store.refresh(force: true, now: at(20_000))  // user moves to another app
 
-        #expect(!unread(store, "cli-open", spokeAt: 9_900))
+        #expect(try !unread(&store, "cli-open", spokeAt: 9_900))
     }
 
     /// The marks outlive the app, so a relaunch does not reannounce answers the
@@ -220,8 +257,8 @@ struct ClaudeDesktopTests {
         var relaunched = ClaudeDesktopSessionStore(roots: [root], defaults: defaults) { false }
         relaunched.refresh(force: true, now: at(20_000))
 
-        #expect(!unread(relaunched, "cli-open", spokeAt: 9_500))
-        #expect(unread(relaunched, "cli-away", spokeAt: 3_000))
+        #expect(try !unread(&relaunched, "cli-open", spokeAt: 9_500))
+        #expect(try unread(&relaunched, "cli-away", spokeAt: 3_000))
     }
 
     /// The answer is announced the moment the hook says the turn ended. The
@@ -235,9 +272,9 @@ struct ClaudeDesktopTests {
         var store = ClaudeDesktopSessionStore(roots: [root], defaults: makeDefaults()) { false }
         store.refresh(force: true, now: at(5_100))
 
-        #expect(unread(store, "cli-slow", spokeAt: 5_000))
+        #expect(try unread(&store, "cli-slow", spokeAt: 5_000))
         // And an answer older than the last look is still nothing to announce.
-        #expect(!unread(store, "cli-slow", spokeAt: 1_500))
+        #expect(try !unread(&store, "cli-slow", spokeAt: 1_500))
     }
 
     /// Some records carry no focus stamp at all. Reading that as "never opened"
@@ -251,7 +288,7 @@ struct ClaudeDesktopTests {
         store.refresh(force: true, now: at(5_000))
 
         #expect(store.session(forCLISession: "cli-nofocus")?.lastFocusedAt == nil)
-        #expect(!unread(store, "cli-nofocus", spokeAt: 9_000))
+        #expect(try !unread(&store, "cli-nofocus", spokeAt: 9_000))
     }
 
     /// The failure that drove this whole signal, end to end: the user leaves the
@@ -270,14 +307,14 @@ struct ClaudeDesktopTests {
             roots: [root], defaults: makeDefaults(), focusLog: ClaudeDesktopFocusLog(url: log)
         ) { true }
         store.refresh(force: true, now: at(10_000))
-        #expect(!unread(store, "cli-open", spokeAt: 9_500))
+        #expect(try !unread(&store, "cli-open", spokeAt: 9_500))
 
         try append(to: log, "null")
         try append(to: log, "null")
         store.refresh(force: true, now: at(20_000))  // the app is still in front
         store.refresh(force: true, now: at(30_000))  // and writes nothing more
 
-        #expect(unread(store, "cli-open", spokeAt: 25_000))
+        #expect(try unread(&store, "cli-open", spokeAt: 25_000))
     }
 
     /// With no log to read — an older app, a quieter log level — the best guess
@@ -292,8 +329,8 @@ struct ClaudeDesktopTests {
         ) { true }
         store.refresh(force: true, now: at(10_000))
 
-        #expect(!unread(store, "cli-open", spokeAt: 9_500))
-        #expect(unread(store, "cli-away", spokeAt: 3_000))
+        #expect(try !unread(&store, "cli-open", spokeAt: 9_500))
+        #expect(try unread(&store, "cli-away", spokeAt: 3_000))
     }
 
     /// A scan that lists nothing — an unreadable directory, a moved folder —
@@ -317,7 +354,89 @@ struct ClaudeDesktopTests {
         try FileManager.default.moveItem(at: hidden, to: root)
         store.refresh(force: true, now: at(30_000))
 
-        #expect(!unread(store, "cli-open", spokeAt: 9_500))
+        #expect(try !unread(&store, "cli-open", spokeAt: 9_500))
+    }
+
+    /// Clicking a session in the desktop app starts its process, and the app can
+    /// evict it again a minute later. Every start rewrites the hook's file, and a
+    /// session whose last turn was cut off also gets a placeholder answer from
+    /// Claude Code — neither of which is anything new for the user to read.
+    @Test func aSessionTheAppStartsAgainIsNotUnread() throws {
+        let root = try makeSessionsRoot([
+            Record(desktopId: "local_woken", cliId: "cli-woken", lastActivityAt: 1_000, lastFocusedAt: 2_000)
+        ])
+        let transcript = try makeTranscript([
+            transcriptLine("assistant", at: 1_000),
+            transcriptLine("user", at: 1_500, text: "[Request interrupted by user]"),
+            // Written as the click starts the process, after the user has moved on.
+            transcriptLine("assistant", at: 3_000, model: "<synthetic>", text: "No response requested."),
+            #"{"type":"last-prompt","lastPrompt":"test"}"#
+        ])
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: transcript)
+        }
+        var store = ClaudeDesktopSessionStore(roots: [root], defaults: makeDefaults()) { false }
+        store.refresh(force: true, now: at(5_000))
+
+        let woken = store.isUnread(
+            source: .claudeDesktop, hookState: .idle, cliSessionId: "cli-woken", transcript: transcript
+        )
+        #expect(!woken)
+
+        // A real answer after that is news again.
+        try append(line: transcriptLine("assistant", at: 6_000), to: transcript)
+        let answered = store.isUnread(
+            source: .claudeDesktop, hookState: .idle, cliSessionId: "cli-woken", transcript: transcript
+        )
+        #expect(answered)
+    }
+
+    // MARK: - Transcript
+
+    /// Subagents and Claude Code itself write assistant lines too. The last answer
+    /// is the last line that is neither, even while another is half written.
+    @Test func theLastAnswerSkipsLinesThatAreNotAnswers() throws {
+        let transcript = try makeTranscript([
+            transcriptLine("assistant", at: 1_000),
+            transcriptLine("assistant", at: 2_000, ["isSidechain": true]),
+            transcriptLine("assistant", at: 3_000, model: "<synthetic>", text: "No response requested."),
+            transcriptLine("user", at: 4_000),
+            #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"te"#
+        ])
+        // An API error comes from Claude Code as well, but it does end the turn.
+        let failed = try makeTranscript([
+            transcriptLine("assistant", at: 1_000),
+            transcriptLine(
+                "assistant", at: 2_000, model: "<synthetic>", text: "API Error: 529 Overloaded",
+                ["isApiErrorMessage": true]
+            )
+        ])
+        defer {
+            try? FileManager.default.removeItem(at: transcript)
+            try? FileManager.default.removeItem(at: failed)
+        }
+
+        #expect(ClaudeDesktopSessionStore.lastAnswer(in: transcript) == at(1_000))
+        #expect(ClaudeDesktopSessionStore.lastAnswer(in: failed) == at(2_000))
+    }
+
+    /// Attachments and file snapshots can pile up after the answer, well past the
+    /// first read, which has to reach back for it.
+    @Test func anAnswerBehindALongTailIsFound() throws {
+        let attachment = #"{"type":"attachment","content":""# + String(repeating: "x", count: 100_000) + #""}"#
+        let transcript = try makeTranscript(
+            [transcriptLine("assistant", at: 1_000)] + Array(repeating: attachment, count: 3)
+        )
+        let unanswered = try makeTranscript([transcriptLine("user", at: 1_000)])
+        defer {
+            try? FileManager.default.removeItem(at: transcript)
+            try? FileManager.default.removeItem(at: unanswered)
+        }
+
+        #expect(ClaudeDesktopSessionStore.lastAnswer(in: transcript) == at(1_000))
+        #expect(ClaudeDesktopSessionStore.lastAnswer(in: unanswered) == nil)
+        #expect(ClaudeDesktopSessionStore.lastAnswer(in: unanswered.appendingPathExtension("gone")) == nil)
     }
 
     // MARK: - Focus log

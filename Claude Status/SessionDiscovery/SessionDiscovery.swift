@@ -183,13 +183,14 @@ struct SessionDiscovery {
     // MARK: - Session Assembly
 
     /// Builds a `ClaudeSession` from a validated `CStatusRecord`.
-    private func assembleSession(from record: CStatusRecord, profileName: String?) -> ClaudeSession {
+    private mutating func assembleSession(from record: CStatusRecord, profileName: String?) -> ClaudeSession {
         let source = classifySource(pid: record.pid, ppid: record.ppid)
         let isUnread = desktopSessions.isUnread(
             source: source,
             hookState: record.state,
             cliSessionId: record.sessionId,
-            lastSpokeAt: record.timestamp
+            // The hook names its file after the transcript it sits beside.
+            transcript: record.fileURL.deletingPathExtension().appendingPathExtension("jsonl")
         )
         let projectName = (record.cwd as NSString).lastPathComponent
 
