@@ -114,7 +114,7 @@ struct SessionListView: View {
             onPetToggle?()
         } label: {
             Image(systemName: "pawprint.fill")
-                .font(.system(size: 10))
+                .font(.system(size: 12))
         }
         .buttonStyle(RoundToggleButtonStyle(isOn: isPetShown))
         .help(isPetShown ? "Hide Desktop Pet" : "Show Desktop Pet")
@@ -197,16 +197,25 @@ struct SessionListView: View {
 
 /// A round button filled with the accent colour while what it switches is on, as
 /// Control Center draws its toggles.
+///
+/// The circle is drawn outside the icon's own box rather than around a larger
+/// frame, so the button takes the same room as the plain icons beside it and
+/// lines up with them.
 private struct RoundToggleButtonStyle: ButtonStyle {
     let isOn: Bool
+
+    private static let ring: CGFloat = 5
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(isOn ? Color.white : Color.secondary)
-            .frame(width: 20, height: 20)
-            .background(Circle().fill(isOn ? Color.accentColor : Color.primary.opacity(0.1)))
+            .background(
+                Circle()
+                    .fill(isOn ? Color.accentColor : Color.primary.opacity(0.1))
+                    .padding(-Self.ring)
+            )
             .opacity(configuration.isPressed ? 0.7 : 1)
-            .contentShape(Circle())
+            .contentShape(Circle().inset(by: -Self.ring))
     }
 }
 
