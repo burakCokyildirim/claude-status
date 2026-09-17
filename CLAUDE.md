@@ -136,6 +136,8 @@ The app supports multiple Claude Code profiles (config dirs selected via `CLAUDE
    - **File system watching** (fast) — `DispatchSource` on each enabled profile's `projects/` dir
    - **Polling timer** (5s fallback) — catches sessions without hooks (IDE agents)
 
+A session is listed under the first name it has: one set with `/name-session` (the `.cstatus` `session_name`), the title the Claude desktop app lists it under, the title Claude Code wrote into its transcript (`custom-title`, then `ai-title`, read from the end and at most every 30 seconds), and otherwise its project folder. The name lands in `ClaudeSession.sessionName`, so the session list, the widget, and the pet all show it without knowing where it came from.
+
 ### Session State
 
 State is reported by the hook script in `.cstatus` files:

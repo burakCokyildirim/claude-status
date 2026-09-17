@@ -210,6 +210,10 @@ struct SessionDiscovery {
             transcript: transcript
         )
         let projectName = (record.cwd as NSString).lastPathComponent
+        // A name the user gave with /name-session first, then the session's own
+        // title; with neither, the list falls back to the project folder.
+        let sessionName = record.sessionName
+            ?? desktopSessions.title(record.sessionId, transcript: transcript)
 
         let iTermSessionId: String?
         let tmuxPaneId: String?
@@ -250,7 +254,7 @@ struct SessionDiscovery {
             tmuxSocket: tmuxSocket,
             source: source,
             activity: shown.activity,
-            sessionName: record.sessionName,
+            sessionName: sessionName,
             profileName: profileName,
             isUnread: isUnread,
             remoteSessionId: remoteSessionId

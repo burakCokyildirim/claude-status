@@ -20,6 +20,7 @@ struct ClaudeDesktopTests {
         var lastActivityAt: Double = 1_000
         var lastFocusedAt: Double? = 2_000
         var isArchived = false
+        var title: String?
     }
 
     /// Lays out `<root>/<account>/<organization>/local_<id>.json` the way the
@@ -42,6 +43,7 @@ struct ClaudeDesktopTests {
             ]
             if let focused = record.lastFocusedAt { json["lastFocusedAt"] = focused }
             if record.isArchived { json["isArchived"] = true }
+            if let title = record.title { json["title"] = title }
             try JSONSerialization.data(withJSONObject: json)
                 .write(to: organization.appendingPathComponent("\(record.desktopId).json"))
         }
@@ -617,6 +619,67 @@ struct ClaudeDesktopTests {
         #expect(beforeBridging == nil)
         #expect(afterBridging == "session_018TJSkQZbYQzh9igkcYjrte")
         #expect(ClaudeDesktopSessionStore.remoteSessionId(inTranscript: malformed) == nil)
+    }
+
+    // MARK: - Titles
+
+    /// The app lists a session under its own title, which is what a person looks
+    /// for; the transcript only stands in when the app has no record of it.
+    @Test func aSessionGoesByTheTitleTheAppListsItUnder() throws {
+        let root = try makeSessionsRoot([
+            Record(desktopId: "local_titled", cliId: "cli-titled", title: "Desktop Pet testing"),
+            Record(desktopId: "local_untitled", cliId: "cli-untitled")
+        ])
+        let transcript = try makeTranscript([
+            #"{"type":"custom-title","customTitle":"An older title","sessionId":"cli-titled"}"#
+        ])
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: transcript)
+        }
+        var store = ClaudeDesktopSessionStore(roots: [root], defaults: makeDefaults()) { false }
+        store.refresh(force: true)
+
+        #expect(store.title("cli-titled", transcript: transcript) == "Desktop Pet testing")
+        #expect(store.title("cli-untitled", transcript: transcript) == "An older title")
+    }
+
+    /// Claude Code writes the title a session was given, and one it makes up
+    /// itself; the given one wins wherever it sits, and blank ones do not count.
+    @Test func aTranscriptGivesTheTitleTheSessionWasGivenFirst() throws {
+        let given = try makeTranscript([
+            #"{"type":"custom-title","customTitle":"Lottie upgrade","sessionId":"s"}"#,
+            try transcriptLine("assistant", at: 1_000),
+            #"{"type":"ai-title","aiTitle":"Merge it","sessionId":"s"}"#,
+            #"{"type":"custom-title","customTitle":"  ","sessionId":"s"}"#
+        ])
+        let madeUp = try makeTranscript([#"{"type":"ai-title","aiTitle":"Merge it","sessionId":"s"}"#])
+        let none = try makeTranscript([try transcriptLine("assistant", at: 1_000)])
+        defer {
+            for url in [given, madeUp, none] { try? FileManager.default.removeItem(at: url) }
+        }
+
+        #expect(ClaudeDesktopSessionStore.title(inTranscript: given) == "Lottie upgrade")
+        #expect(ClaudeDesktopSessionStore.title(inTranscript: madeUp) == "Merge it")
+        #expect(ClaudeDesktopSessionStore.title(inTranscript: none) == nil)
+    }
+
+    /// A working session's transcript changes all the time; its title is read
+    /// again only once it has had time to change.
+    @Test func aTitleIsReadAgainOnlyAfterAWhile() throws {
+        let transcript = try makeTranscript([#"{"type":"custom-title","customTitle":"First","sessionId":"s"}"#])
+        defer { try? FileManager.default.removeItem(at: transcript) }
+        var store = ClaudeDesktopSessionStore(roots: [], defaults: makeDefaults()) { false }
+        let start = Date()
+
+        let first = store.title("s", transcript: transcript, now: start)
+        try append(line: #"{"type":"custom-title","customTitle":"Second","sessionId":"s"}"#, to: transcript)
+        let soonAfter = store.title("s", transcript: transcript, now: start.addingTimeInterval(5))
+        let later = store.title("s", transcript: transcript, now: start.addingTimeInterval(31))
+
+        #expect(first == "First")
+        #expect(soonAfter == "First")
+        #expect(later == "Second")
     }
 
     // MARK: - Focus log

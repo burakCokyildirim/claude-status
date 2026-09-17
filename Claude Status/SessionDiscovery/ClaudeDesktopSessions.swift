@@ -11,6 +11,8 @@ struct ClaudeDesktopSession: Equatable {
     /// that carry no stamp at all.
     let lastFocusedAt: Double?
     let isArchived: Bool
+    /// The name the app lists the session under, or `nil` before it has one.
+    let title: String?
 }
 
 /// A desktop session as it was last seen running, and the transcript it writes to.
@@ -66,6 +68,8 @@ struct ClaudeDesktopSessionStore {
     private var answers: [String: (transcript: URL, size: Int, modified: Date, answeredAt: Date?)] = [:]
     /// The Remote Control session each transcript is bridged to, the same way.
     private var remoteSessions: [String: (transcript: URL, size: Int, modified: Date, remoteSessionId: String?)] = [:]
+    /// The title each transcript carries, the same way, with when it was read.
+    private var titles: [String: (transcript: URL, size: Int, modified: Date, readAt: Date, title: String?)] = [:]
     /// Desktop sessions as last seen running, keyed by our session ID.
     private var lastRunning: [String: RunningSession]
     private var savedUnreadIds: Set<String>
@@ -295,6 +299,63 @@ struct ClaudeDesktopSessionStore {
         }
     }
 
+    // MARK: - Titles
+
+    private static let customTitleMarker = Data(#""custom-title""#.utf8)
+    private static let aiTitleMarker = Data(#""ai-title""#.utf8)
+
+    /// A working session's transcript changes with every line, but its title
+    /// rarely does, and a transcript without one is read up to the last tail step
+    /// before giving up. So a changed transcript is read again at most this often.
+    private static let titleRereadInterval: TimeInterval = 30
+
+    /// The name a session goes by, or `nil` when nothing has named it: the one the
+    /// desktop app lists it under, and otherwise the one Claude Code gives it in
+    /// the transcript. The hook's own `session_name`, set with `/name-session`,
+    /// comes before either and is not looked at here.
+    mutating func title(_ cliSessionId: String, transcript: URL, now: Date = Date()) -> String? {
+        if let title = byCLISessionId[cliSessionId]?.title {
+            return title
+        }
+        guard let state = Self.state(of: transcript) else { return nil }
+        if let cached = titles[cliSessionId], cached.transcript == transcript {
+            let unchanged = cached.size == state.size && cached.modified == state.modified
+            if unchanged || now.timeIntervalSince(cached.readAt) < Self.titleRereadInterval {
+                return cached.title
+            }
+        }
+        let title = Self.title(inTranscript: transcript)
+        titles[cliSessionId] = (transcript, state.size, state.modified, now, title)
+        return title
+    }
+
+    /// The title Claude Code last wrote into a transcript: one the user gave the
+    /// session, or else one it made up itself.
+    static func title(inTranscript transcript: URL) -> String? {
+        var madeUp: String?
+        let given: String? = lastMatch(in: transcript) { line in
+            if let title = titleText(line, marker: customTitleMarker, type: "custom-title", key: "customTitle") {
+                return title
+            }
+            if madeUp == nil {
+                madeUp = titleText(line, marker: aiTitleMarker, type: "ai-title", key: "aiTitle")
+            }
+            return nil
+        }
+        return given ?? madeUp
+    }
+
+    private static func titleText(_ line: Data, marker: Data, type: String, key: String) -> String? {
+        guard line.range(of: marker) != nil,
+              let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              json["type"] as? String == type,
+              let title = (json[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !title.isEmpty else {
+            return nil
+        }
+        return title
+    }
+
     // MARK: - Seen
 
     /// Marks the session on screen as seen, so an answer the user watched arrive
@@ -469,7 +530,10 @@ struct ClaudeDesktopSessionStore {
             sessionId: sessionId,
             lastActivityAt: (json["lastActivityAt"] as? NSNumber)?.doubleValue ?? 0,
             lastFocusedAt: (json["lastFocusedAt"] as? NSNumber)?.doubleValue,
-            isArchived: json["isArchived"] as? Bool ?? false
+            isArchived: json["isArchived"] as? Bool ?? false,
+            title: (json["title"] as? String)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .flatMap { $0.isEmpty ? nil : $0 }
         ))
     }
 }
