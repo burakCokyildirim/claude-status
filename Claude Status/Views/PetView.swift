@@ -40,9 +40,15 @@ struct PetView: View {
                     // Whole points: half a point of lift blurs the pixel art.
                     pet.offset(y: -lift.rounded())
                 } keyframes: { _ in
+                    // Twice, the second lower, the way anything that bounces lands.
+                    // Cubic rather than sprung: a spring given a tenth of a second
+                    // never reaches its mark, which left the pet hanging above the
+                    // ground once the last one ran out.
                     KeyframeTrack {
-                        SpringKeyframe(scale * 2, duration: 0.16, spring: .snappy)
-                        SpringKeyframe(0, duration: 0.28, spring: .bouncy)
+                        CubicKeyframe(hopHeight, duration: 0.1)
+                        CubicKeyframe(0, duration: 0.12)
+                        CubicKeyframe(hopHeight * 0.6, duration: 0.09)
+                        CubicKeyframe(0, duration: 0.12)
                     }
                 }
                 .offset(x: petRect.minX, y: petRect.minY)
@@ -122,4 +128,8 @@ struct PetView: View {
     // MARK: - Geometry
 
     private var petRect: CGRect { PetLayout.petRect(scale: scale) }
+
+    /// How far a hop lifts the character: nearly three cells, and never past the
+    /// room the panel keeps above it.
+    private var hopHeight: CGFloat { min(scale * 2.8, petRect.minY) }
 }
