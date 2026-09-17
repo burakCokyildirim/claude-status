@@ -179,6 +179,7 @@ struct SessionDiscoveryTests {
 
     /// A turn that ended by asking something waits only while questions count as
     /// waiting; a prompt that really holds the session waits either way.
+    @MainActor
     @Test func aQuestionWaitsOnlyWhileQuestionsCountAsWaiting() {
         let counted = SessionDiscovery.shownState(.waiting, activity: "question", questionsCountAsWaiting: true)
         let notCounted = SessionDiscovery.shownState(.waiting, activity: "question", questionsCountAsWaiting: false)
