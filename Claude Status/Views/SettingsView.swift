@@ -13,6 +13,8 @@ struct SettingsView: View {
     @AppStorage("iconStyle", store: AppGroup.defaults)
     private var iconStyle: SessionIconStyle = .emoji
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @AppStorage(SessionDiscovery.questionsCountAsWaitingKey, store: AppGroup.defaults)
+    private var questionsCountAsWaiting: Bool = true
 
     @AppStorage(PetSettings.Keys.enabled, store: AppGroup.defaults)
     private var petEnabled: Bool = false
@@ -41,6 +43,15 @@ struct SettingsView: View {
                     .onChange(of: launchAtLogin) { _, newValue in
                         toggleLaunchAtLogin(newValue)
                     }
+                Toggle(isOn: $questionsCountAsWaiting) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Questions Count as Waiting")
+                            .font(.body)
+                        Text("A turn that ends by asking you something shows as Waiting until you reply")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             Section {

@@ -198,9 +198,14 @@ struct SessionDiscovery {
             ? desktopSessions.remoteSessionId(record.sessionId, transcript: transcript)
             : nil
         let source = host ?? (remoteSessionId == nil ? .terminal(app: "Terminal") : .claudeDesktop)
+        let shown = Self.shownState(
+            record.state,
+            activity: record.activity,
+            questionsCountAsWaiting: AppGroup.defaults?.object(forKey: Self.questionsCountAsWaitingKey) as? Bool ?? true
+        )
         let isUnread = desktopSessions.isUnread(
             source: source,
-            hookState: record.state,
+            hookState: shown.state,
             cliSessionId: record.sessionId,
             transcript: transcript
         )
@@ -238,18 +243,37 @@ struct SessionDiscovery {
             pid: record.pid,
             workingDirectory: record.cwd,
             projectName: projectName,
-            state: record.state,
+            state: shown.state,
             lastActivityAt: record.timestamp,
             iTermSessionId: iTermSessionId,
             tmuxPaneId: tmuxPaneId,
             tmuxSocket: tmuxSocket,
             source: source,
-            activity: record.activity,
+            activity: shown.activity,
             sessionName: record.sessionName,
             profileName: profileName,
             isUnread: isUnread,
             remoteSessionId: remoteSessionId
         )
+    }
+
+    /// The App Group key for whether a turn that ended by asking something counts
+    /// as waiting. Unset means it does, as the hook reports it.
+    static let questionsCountAsWaitingKey = "countQuestionsAsWaiting"
+
+    /// The state a session shows. The hook reports a turn whose last paragraph
+    /// asks something as waiting, guessing from the text; when questions do not
+    /// count as waiting, that shows as the finished turn the Claude desktop app
+    /// calls it. A prompt that really holds the session keeps waiting either way.
+    static func shownState(
+        _ hookState: SessionState,
+        activity: String,
+        questionsCountAsWaiting: Bool
+    ) -> (state: SessionState, activity: String) {
+        guard hookState == .waiting, activity == "question", !questionsCountAsWaiting else {
+            return (hookState, activity)
+        }
+        return (.idle, "")
     }
 
     // MARK: - Process Validation
