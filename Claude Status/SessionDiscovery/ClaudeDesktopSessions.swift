@@ -64,6 +64,8 @@ struct ClaudeDesktopSessionStore {
     /// When Claude last answered, keyed by our session ID, with the transcript
     /// state it was read from.
     private var answers: [String: (transcript: URL, size: Int, modified: Date, answeredAt: Date?)] = [:]
+    /// The Remote Control session each transcript is bridged to, the same way.
+    private var remoteSessions: [String: (transcript: URL, size: Int, modified: Date, remoteSessionId: String?)] = [:]
     /// Desktop sessions as last seen running, keyed by our session ID.
     private var lastRunning: [String: RunningSession]
     private var savedUnreadIds: Set<String>
@@ -183,19 +185,13 @@ struct ClaudeDesktopSessionStore {
     /// The last answer in one session's transcript, read again only when the
     /// file changes.
     private mutating func lastAnswer(_ cliSessionId: String, in transcript: URL) -> Date? {
-        // A URL keeps the values it looked up, which would hide the file growing.
-        var file = transcript
-        file.removeAllCachedResourceValues()
-        let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-        guard let size = values?.fileSize, let modified = values?.contentModificationDate else {
-            return nil
-        }
+        guard let state = Self.state(of: transcript) else { return nil }
         if let cached = answers[cliSessionId], cached.transcript == transcript,
-           cached.size == size, cached.modified == modified {
+           cached.size == state.size, cached.modified == state.modified {
             return cached.answeredAt
         }
         let answeredAt = Self.lastAnswer(in: transcript)
-        answers[cliSessionId] = (transcript, size, modified, answeredAt)
+        answers[cliSessionId] = (transcript, state.size, state.modified, answeredAt)
         return answeredAt
     }
 
@@ -208,6 +204,23 @@ struct ClaudeDesktopSessionStore {
     /// moment the app starts it. The same model marks API errors, which do end a
     /// turn the user needs to see, so those still count.
     static func lastAnswer(in transcript: URL) -> Date? {
+        lastMatch(in: transcript) { answerDate($0) }
+    }
+
+    /// A transcript's size and modification date, to tell whether it changed.
+    private static func state(of transcript: URL) -> (size: Int, modified: Date)? {
+        // A URL keeps the values it looked up, which would hide the file growing.
+        var file = transcript
+        file.removeAllCachedResourceValues()
+        let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        guard let size = values?.fileSize, let modified = values?.contentModificationDate else {
+            return nil
+        }
+        return (size, modified)
+    }
+
+    /// The first line `match` accepts, reading a transcript from the end.
+    private static func lastMatch<T>(in transcript: URL, _ match: (Data) -> T?) -> T? {
         guard let handle = try? FileHandle(forReadingFrom: transcript) else { return nil }
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return nil }
@@ -219,7 +232,7 @@ struct ClaudeDesktopSessionStore {
             }
             // Unless the read begins the file, its first line is cut off.
             for line in tail.split(separator: UInt8(ascii: "\n")).dropFirst(start == 0 ? 0 : 1).reversed() {
-                if let answeredAt = answerDate(line) { return answeredAt }
+                if let found = match(line) { return found }
             }
             if start == 0 { return nil }
         }
@@ -242,6 +255,44 @@ struct ClaudeDesktopSessionStore {
         }
         return (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(timestamp))
             ?? (try? Date.ISO8601FormatStyle().parse(timestamp))
+    }
+
+    // MARK: - Remote Control
+
+    private static let bridgeMarker = Data(#""bridge-session""#.utf8)
+
+    /// The Remote Control session a session's transcript is bridged to, read
+    /// again only when the file changes.
+    mutating func remoteSessionId(_ cliSessionId: String, transcript: URL) -> String? {
+        guard let state = Self.state(of: transcript) else { return nil }
+        if let cached = remoteSessions[cliSessionId], cached.transcript == transcript,
+           cached.size == state.size, cached.modified == state.modified {
+            return cached.remoteSessionId
+        }
+        let remoteSessionId = Self.remoteSessionId(inTranscript: transcript)
+        remoteSessions[cliSessionId] = (transcript, state.size, state.modified, remoteSessionId)
+        return remoteSessionId
+    }
+
+    /// The Remote Control session a Claude Code transcript is bridged to, under
+    /// the name the desktop app gives it — `session_…` where the transcript
+    /// records `cse_…` — or `nil` when it is not bridged.
+    static func remoteSessionId(inTranscript transcript: URL) -> String? {
+        lastMatch(in: transcript) { line in
+            guard line.range(of: bridgeMarker) != nil,
+                  let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  json["type"] as? String == "bridge-session",
+                  let bridged = json["bridgeSessionId"] as? String else {
+                return nil
+            }
+            let id = bridged.hasPrefix("cse_") ? "session_" + bridged.dropFirst("cse_".count) : bridged
+            let suffix = id.dropFirst("session_".count)
+            guard id.hasPrefix("session_"), (1...64).contains(suffix.count),
+                  suffix.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }) else {
+                return nil
+            }
+            return id
+        }
     }
 
     // MARK: - Seen

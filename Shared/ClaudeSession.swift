@@ -136,6 +136,11 @@ struct ClaudeSession: Identifiable, Codable, Equatable {
     /// to read, while `waiting` says the session is blocked until the user
     /// answers. Optional so data written before it still decodes.
     var isUnread: Bool? = nil
+    /// The Remote Control session this process is bridged to, as the Claude
+    /// desktop app names it (`session_…`). Set only for a session no terminal or
+    /// IDE owns, which the user reaches through the app instead. Optional so data
+    /// written before it still decodes.
+    var remoteSessionId: String? = nil
 
     /// Use sessionId as the SwiftUI identity (stable, unlike PIDs).
     var id: String { sessionId }

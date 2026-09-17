@@ -590,6 +590,35 @@ struct ClaudeDesktopTests {
         #expect(ClaudeDesktopSessionStore.lastAnswer(in: unanswered.appendingPathExtension("gone")) == nil)
     }
 
+    // MARK: - Remote Control
+
+    /// A session started outside the app with Remote Control is bridged, and the
+    /// transcript says to which session the app shows it as. Reading it again
+    /// once the file changes catches a bridge made after the session started.
+    @Test func aBridgedTranscriptNamesItsRemoteSession() throws {
+        let transcript = try makeTranscript([transcriptLine("assistant", at: 1_000)])
+        let malformed = try makeTranscript([
+            #"{"type":"bridge-session","sessionId":"cli-x","bridgeSessionId":"cse_../../etc"}"#
+        ])
+        defer {
+            try? FileManager.default.removeItem(at: transcript)
+            try? FileManager.default.removeItem(at: malformed)
+        }
+        var store = ClaudeDesktopSessionStore(roots: [], defaults: makeDefaults()) { false }
+        let beforeBridging = store.remoteSessionId("cli-x", transcript: transcript)
+
+        try append(
+            line: #"{"type":"bridge-session","sessionId":"cli-x","bridgeSessionId":"cse_018TJSkQZbYQzh9igkcYjrte"}"#,
+            to: transcript
+        )
+        try append(line: transcriptLine("user", at: 2_000), to: transcript)
+        let afterBridging = store.remoteSessionId("cli-x", transcript: transcript)
+
+        #expect(beforeBridging == nil)
+        #expect(afterBridging == "session_018TJSkQZbYQzh9igkcYjrte")
+        #expect(ClaudeDesktopSessionStore.remoteSessionId(inTranscript: malformed) == nil)
+    }
+
     // MARK: - Focus log
 
     @Test func theFocusLogReadsTheLastSwitch() throws {
@@ -708,6 +737,18 @@ struct ClaudeDesktopTests {
         #expect(SessionFocuser.claudeDesktopURL(forDesktopSession: "local_x&session=last") == nil)
     }
 
+    /// A session shown through Remote Control has a link of its own, which takes
+    /// only the app's `session_` IDs.
+    @Test func linksToRemoteSessionsOnlyByTheirIds() {
+        #expect(
+            SessionFocuser.claudeDesktopURL(forRemoteSession: "session_018TJSkQZbYQzh9igkcYjrte")?.absoluteString
+                == "claude://code/session_018TJSkQZbYQzh9igkcYjrte"
+        )
+        #expect(SessionFocuser.claudeDesktopURL(forRemoteSession: "local_2222-bbbb") == nil)
+        #expect(SessionFocuser.claudeDesktopURL(forRemoteSession: "session_x/../continue") == nil)
+        #expect(SessionFocuser.claudeDesktopURL(forRemoteSession: "session_") == nil)
+    }
+
     @Test func desktopSessionsAreLabelledClaude() throws {
         #expect(SessionSource.claudeDesktop.label == "Claude")
         #expect(!SessionSource.claudeDesktop.isTerminal)
@@ -726,5 +767,6 @@ struct ClaudeDesktopTests {
         let session = try JSONDecoder().decode(ClaudeSession.self, from: Data(json.utf8))
 
         #expect(session.isUnread == nil)
+        #expect(session.remoteSessionId == nil)
     }
 }

@@ -190,12 +190,19 @@ struct SessionDiscovery {
 
     /// Builds a `ClaudeSession` from a validated `CStatusRecord`.
     private mutating func assembleSession(from record: CStatusRecord, profileName: String?) -> ClaudeSession {
-        let source = classifySource(pid: record.pid, ppid: record.ppid)
+        let transcript = ClaudeDesktopSessionStore.transcript(beside: record.fileURL)
+        let host = classifySource(pid: record.pid, ppid: record.ppid)
+        // With no terminal or IDE to own it, a session bridged by Remote Control is
+        // one the user reaches through the Claude app; anything else stays Terminal.
+        let remoteSessionId = host == nil
+            ? desktopSessions.remoteSessionId(record.sessionId, transcript: transcript)
+            : nil
+        let source = host ?? (remoteSessionId == nil ? .terminal(app: "Terminal") : .claudeDesktop)
         let isUnread = desktopSessions.isUnread(
             source: source,
             hookState: record.state,
             cliSessionId: record.sessionId,
-            transcript: ClaudeDesktopSessionStore.transcript(beside: record.fileURL)
+            transcript: transcript
         )
         let projectName = (record.cwd as NSString).lastPathComponent
 
@@ -240,7 +247,8 @@ struct SessionDiscovery {
             activity: record.activity,
             sessionName: record.sessionName,
             profileName: profileName,
-            isUnread: isUnread
+            isUnread: isUnread,
+            remoteSessionId: remoteSessionId
         )
     }
 
@@ -259,8 +267,9 @@ struct SessionDiscovery {
     // MARK: - Source Classification
 
     /// Determines where a Claude session is running by examining the process tree.
-    /// Starts from ppid (the process that launched Claude) and walks up.
-    private func classifySource(pid: pid_t, ppid: pid_t) -> SessionSource {
+    /// Starts from ppid (the process that launched Claude) and walks up. `nil`
+    /// when nothing identifies a host, as for a process a script started.
+    private func classifySource(pid: pid_t, ppid: pid_t) -> SessionSource? {
         // Check the Claude process's own executable path for IDE-bundled binaries
         if let path = executablePath(for: pid) {
             if path.contains("/Developer/Xcode/CodingAssistant/") {
@@ -362,7 +371,7 @@ struct SessionDiscovery {
             return .terminal(app: app)
         }
 
-        return .terminal(app: "Terminal")
+        return nil
     }
 
     /// Identifies the real terminal app when running inside tmux.

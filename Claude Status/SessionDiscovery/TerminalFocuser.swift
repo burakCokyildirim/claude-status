@@ -19,7 +19,7 @@ struct SessionFocuser {
         case .zed:
             activateApp(bundleId: "dev.zed.Zed")
         case .claudeDesktop:
-            focusClaudeDesktop(cliSessionId: session.sessionId)
+            focusClaudeDesktop(session)
         }
     }
 
@@ -50,15 +50,39 @@ struct SessionFocuser {
 
     /// Opens the session itself in the Claude desktop app, or at least brings
     /// the app forward when the session cannot be matched.
-    private func focusClaudeDesktop(cliSessionId: String) {
+    private func focusClaudeDesktop(_ session: ClaudeSession) {
         var store = ClaudeDesktopSessionStore()
         store.refresh(force: true)
-        if let desktop = store.session(forCLISession: cliSessionId),
+        if let desktop = store.session(forCLISession: session.sessionId),
            let url = Self.claudeDesktopURL(forDesktopSession: desktop.sessionId) {
             NSWorkspace.shared.open(url)
-        } else {
-            activateApp(bundleId: ClaudeDesktopSessionStore.claudeDesktopBundleId)
+            return
         }
+        // Bridged by Remote Control. The app puts its link for these behind a
+        // feature switch and quietly ignores it while that is off, so the app is
+        // brought forward either way.
+        if let remote = session.remoteSessionId,
+           let url = Self.claudeDesktopURL(forRemoteSession: remote) {
+            NSWorkspace.shared.open(url)
+        }
+        activateApp(bundleId: ClaudeDesktopSessionStore.claudeDesktopBundleId)
+    }
+
+    /// The desktop app's link to a session it shows through Remote Control:
+    /// `claude://code/session_…`. Anything but such an ID is refused.
+    static func claudeDesktopURL(forRemoteSession remoteSessionId: String) -> URL? {
+        let prefix = "session_"
+        let suffix = remoteSessionId.dropFirst(prefix.count)
+        guard remoteSessionId.hasPrefix(prefix),
+              (1...64).contains(suffix.count),
+              suffix.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }) else {
+            return nil
+        }
+        var components = URLComponents()
+        components.scheme = "claude"
+        components.host = "code"
+        components.path = "/" + remoteSessionId
+        return components.url
     }
 
     /// The desktop app's link to an existing Claude Code session. Its handler
