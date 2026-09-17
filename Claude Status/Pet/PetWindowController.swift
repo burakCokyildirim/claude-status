@@ -263,18 +263,27 @@ final class PetWindowController: NSObject {
         let sessionChanged = resolved?.id != session?.id || mood != sessionMood
             || !Self.drawSameBubble(listed, self.listed)
 
-        // The tick that feeds this fires every second whether or not anything
-        // moved; without this the pet would rebuild its view once a second for
-        // nothing.
         // Idle sessions are not what the badge is for: it says how many sessions
         // are doing something behind the one the pet stands for. An unread one
         // counts — the hook calls it idle, but it is holding an answer.
         let busyCount = sessions.count { $0.state != .idle || $0.isUnread == true }
-        guard sessionChanged || busyCount != sessionCount || !hasApplied else { return }
-
+        // Kept up to date even when nothing on screen changes, so a click and the
+        // bubble's times go by the session as it is now.
         session = resolved
-        sessionMood = mood
         self.listed = listed
+
+        // The tick that feeds this fires every second whether or not anything
+        // moved; without this the pet would rebuild its view once a second for
+        // nothing.
+        guard sessionChanged || busyCount != sessionCount || !hasApplied else {
+            // A line's "2m ago" moves on while nothing else does.
+            if !bubbleRows.isEmpty, bubbleRows != drawnBubbleRows {
+                layoutBubble()
+            }
+            return
+        }
+
+        sessionMood = mood
         sessionCount = busyCount
 
         if !hasApplied {
@@ -410,13 +419,11 @@ final class PetWindowController: NSObject {
             count: sessionCount,
             isBubbleOpen: isBubbleOpen
         )
-        let size = CGSize(width: bubbleView.bubbleWidth, height: PetLayout.bubbleHeight(rows: rows.count))
         let area = Self.screen(holding: pet, among: Self.currentScreens())?.workingArea ?? pet
         let placement = PetLayout.bubblePlacement(
-            size: size,
+            size: PetLayout.bubbleSize(rows: rows.count),
             target: PetLayout.screenRect(badge, inPanelAt: panel.frame),
             below: pet.minY,
-            rows: rows.count,
             in: area
         )
         if placement.isAbove != isBubbleAbove || placement.tailX != bubbleTailX {

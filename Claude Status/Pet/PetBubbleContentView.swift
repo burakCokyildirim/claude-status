@@ -31,11 +31,6 @@ final class PetBubbleContentView: NSView {
         set { hostingView.rootView = newValue }
     }
 
-    /// The width SwiftUI wants for the bubble as it stands.
-    var bubbleWidth: CGFloat {
-        hostingView.fittingSize.width
-    }
-
     /// Top-left origin, matching SwiftUI and `PetLayout`.
     override var isFlipped: Bool { true }
 

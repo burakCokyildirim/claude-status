@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The pet's speech bubble: the sessions that are doing something, one line
-/// each, the first nearest the pet, with a tail pointing at the pet's badge.
+/// The pet's speech bubble: the sessions it lists, each drawn the way the session
+/// list draws it, the first nearest the tail that points at the pet's badge.
 ///
 /// Purely a renderer, like `PetView`: `PetBubbleContentView` owns the mouse and
 /// tells it which row is under the pointer.
@@ -21,6 +21,10 @@ struct PetBubbleView: View {
     /// can be laid out before it shows.
     let isShown: Bool
 
+    /// Emoji or dots, as the session list shows them.
+    @AppStorage("iconStyle", store: AppGroup.defaults)
+    private var iconStyle: SessionIconStyle = .emoji
+
     /// How long the bubble takes to draw back into the badge.
     static let drawInDuration: TimeInterval = 0.12
 
@@ -32,13 +36,13 @@ struct PetBubbleView: View {
         }
         .padding(.vertical, PetLayout.bubblePadding)
         .padding(isAbove ? .bottom : .top, PetLayout.bubbleTailHeight)
-        .frame(maxWidth: PetLayout.bubbleWidth)
+        .frame(width: PetLayout.bubbleWidth)
         .fixedSize()
         .background(
-            BubbleOutline(radius: PetLayout.bubbleCornerRadius(rows: rows.count), tailX: tailX, isTailAtBottom: isAbove)
+            BubbleOutline(radius: PetLayout.bubbleCornerRadius, tailX: tailX, isTailAtBottom: isAbove)
                 .fill(.background)
                 .overlay(
-                    BubbleOutline(radius: PetLayout.bubbleCornerRadius(rows: rows.count), tailX: tailX, isTailAtBottom: isAbove)
+                    BubbleOutline(radius: PetLayout.bubbleCornerRadius, tailX: tailX, isTailAtBottom: isAbove)
                         .stroke(Color.primary.opacity(0.15), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.22), radius: 5, y: 2)
@@ -67,31 +71,66 @@ struct PetBubbleView: View {
         isAbove ? Array(rows.indices.reversed()) : Array(rows.indices)
     }
 
+    /// A line laid out as `SessionRowView` lays out a session, in less width.
     private func line(_ row: PetBubbleRow, isHighlighted: Bool) -> some View {
         HStack(spacing: 6) {
-            if let accent = row.accent {
-                Circle()
-                    .fill(accent)
-                    .frame(width: 7, height: 7)
+            indicator(for: row)
+                .frame(width: 16, alignment: .leading)
+            VStack(alignment: .leading, spacing: 1) {
+                RollingTitle(text: row.title, isRolling: isHighlighted && isShown)
+                if !row.details.isEmpty {
+                    details(row.details)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
-            RollingTitle(text: row.title, isRolling: isHighlighted && isShown)
             Spacer(minLength: 8)
-            // The state always reads in full; a long title is what gives way.
+            // The state and its time always read in full; a long name is what gives way.
             if let stateLabel = row.stateLabel {
-                Text(stateLabel)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .fixedSize()
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(stateLabel)
+                        .font(.system(size: 11))
+                    if let time = row.time {
+                        Text(time)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .lineLimit(1)
+                .fixedSize()
             }
         }
         .padding(.horizontal, 10)
         .frame(height: PetLayout.bubbleRowHeight)
         .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.primary.opacity(isHighlighted ? 0.1 : 0))
-                .padding(.horizontal, 4)
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.primary.opacity(isHighlighted ? 0.08 : 0))
+                .padding(.horizontal, 6)
         )
+    }
+
+    @ViewBuilder
+    private func indicator(for row: PetBubbleRow) -> some View {
+        if let mood = row.mood {
+            switch iconStyle {
+            case .emoji:
+                Text(row.emoji ?? "")
+                    .font(.system(size: 14))
+            case .dots:
+                Circle()
+                    .fill(mood.accent)
+                    .frame(width: 8, height: 8)
+            }
+        }
+    }
+
+    /// The parts of the line under the name, with the session list's bullets
+    /// between them, as one text so it is cut off at its end.
+    private func details(_ parts: [String]) -> Text {
+        parts.dropFirst().reduce(Text(parts[0])) { text, part in
+            Text("\(text) \(Text("\u{2022}").font(.system(size: 8)).foregroundStyle(.tertiary)) \(part)")
+        }
     }
 }
 
@@ -197,21 +236,40 @@ private struct BubbleOutline: Shape {
 /// One line of the speech bubble.
 struct PetBubbleRow: Equatable {
     let title: String
+    /// Under the title, as in the session list: the folder when the title is a
+    /// name of its own, the host app, and what the session is doing.
+    let details: [String]
     /// What the session is doing, or `nil` for a line that is not a session.
     let stateLabel: String?
-    let accent: Color?
+    /// How long ago the session last did something.
+    let time: String?
+    /// The session's mood, which picks its dot, or `nil` for a line that is not
+    /// a session.
+    let mood: PetMood?
+    /// The emoji the session list shows for it.
+    let emoji: String?
 }
 
 extension PetBubbleRow {
 
     init(session: ClaudeSession) {
-        let mood = PetMood(state: session.state, isUnread: session.isUnread == true)
-        self.init(title: session.sessionName ?? session.projectName, stateLabel: mood.label, accent: mood.accent)
+        let isUnread = session.isUnread == true
+        let mood = PetMood(state: session.state, isUnread: isUnread)
+        self.init(
+            title: session.sessionName ?? session.projectName,
+            details: [session.sessionName != nil ? session.projectName : nil, session.source.label, session.activity]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty },
+            stateLabel: mood.label,
+            time: session.timeSinceActivity,
+            mood: mood,
+            emoji: isUnread ? "\u{1F535}" : session.state.emoji
+        )
     }
 
     /// The last line, standing in for the sessions there is no room to list.
     init(moreSessions count: Int) {
-        self.init(title: "\(count) more\u{2026}", stateLabel: nil, accent: nil)
+        self.init(title: "\(count) more\u{2026}", details: [], stateLabel: nil, time: nil, mood: nil, emoji: nil)
     }
 }
 

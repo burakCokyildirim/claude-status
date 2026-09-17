@@ -54,10 +54,12 @@ struct PetPresenterTests {
     }
 
     /// The bubble lists what is doing something or holding an answer, in the pet's
-    /// own order, so its first line is the session the pet stands for.
+    /// own order, so its first line is the session the pet stands for, and then
+    /// the idle session that did something last.
     @Test func bubbleListsBusySessionsInThePetsOrder() {
         let sessions = [
-            session(id: "idle", state: .idle),
+            session(id: "older-idle", state: .idle, secondsAgo: 60),
+            session(id: "idle", state: .idle, secondsAgo: 30),
             session(id: "active", state: .active, secondsAgo: 5),
             session(id: "unread", state: .idle, isUnread: true),
             session(id: "waiting", state: .waiting),
@@ -66,17 +68,23 @@ struct PetPresenterTests {
         ]
         let listed = PetPresenter.listed(from: sessions).map(\.sessionId)
 
-        #expect(listed == ["waiting", "unread", "newer-active", "active", "compacting"])
+        #expect(listed == ["waiting", "unread", "newer-active", "active", "compacting", "idle"])
         #expect(listed.first == PetPresenter.resolve(from: sessions)?.sessionId)
     }
 
-    /// With nothing busy, the bubble still names the session the pet stands for.
-    @Test func bubbleFallsBackToThePetsOwnSession() {
+    /// With nothing busy, the bubble lists the three idle sessions that did
+    /// something last, the pet's own first.
+    @Test func bubbleFallsBackToTheLatestIdleSessions() {
         let sessions = [
+            session(id: "oldest", state: .idle, secondsAgo: 90),
             session(id: "older", state: .idle, secondsAgo: 60),
-            session(id: "newer", state: .idle)
+            session(id: "newer", state: .idle),
+            session(id: "old", state: .idle, secondsAgo: 30)
         ]
-        #expect(PetPresenter.listed(from: sessions).map(\.sessionId) == ["newer"])
+        let listed = PetPresenter.listed(from: sessions).map(\.sessionId)
+
+        #expect(listed == ["newer", "old", "older"])
+        #expect(listed.first == PetPresenter.resolve(from: sessions)?.sessionId)
         #expect(PetPresenter.listed(from: []).isEmpty)
     }
 

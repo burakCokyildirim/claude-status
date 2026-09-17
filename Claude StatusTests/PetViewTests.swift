@@ -134,17 +134,54 @@ struct PetViewTests {
         }
     }
 
+    private func session(name: String?, activity: String = "", isUnread: Bool? = nil) -> ClaudeSession {
+        ClaudeSession(
+            sessionId: "s",
+            pid: 1,
+            workingDirectory: "/tmp/claude-status",
+            projectName: "claude-status",
+            state: .idle,
+            lastActivityAt: Date().addingTimeInterval(-150),
+            iTermSessionId: nil,
+            tmuxPaneId: nil,
+            tmuxSocket: nil,
+            source: .claudeDesktop,
+            activity: activity,
+            sessionName: name,
+            profileName: nil,
+            isUnread: isUnread
+        )
+    }
+
+    /// A line says what the session list says: the name over its folder, the
+    /// host app, and what it is doing, and the state over its time. The folder
+    /// is left out where it is already the name.
+    @Test func bubbleLinesReadLikeTheSessionList() {
+        let named = PetBubbleRow(session: session(name: "Desktop pet", activity: "Bash", isUnread: true))
+        #expect(named.title == "Desktop pet")
+        #expect(named.details == ["claude-status", "Claude", "Bash"])
+        #expect(named.stateLabel == "Unread")
+        #expect(named.time == "2m ago")
+        #expect(named.mood == .unread)
+        #expect(named.emoji == "\u{1F535}")
+
+        let unnamed = PetBubbleRow(session: session(name: nil))
+        #expect(unnamed.title == "claude-status")
+        #expect(unnamed.details == ["Claude"])
+        #expect(unnamed.stateLabel == "Idle")
+    }
+
     /// A long session name has to truncate. Sized to its text instead, the
     /// bubble outgrows its panel, which clips both ends and the state label.
     @Test func bubbleKeepsToItsWidth() throws {
         let bubble = PetBubbleView(
             rows: [
-                PetBubbleRow(
-                    title: "feat-affectionate-archimedes-bsew0o-desktop-pet-with-a-long-name",
-                    stateLabel: "Waiting",
-                    accent: .orange
-                ),
-                PetBubbleRow(title: "short", stateLabel: "Active", accent: .green),
+                PetBubbleRow(session: session(
+                    name: "feat-affectionate-archimedes-bsew0o-desktop-pet-with-a-long-name",
+                    activity: "a-tool-with-a-long-name-too"
+                )),
+                PetBubbleRow(session: session(name: "short")),
+                PetBubbleRow(moreSessions: 3),
             ],
             isAbove: true,
             highlighted: 1,
@@ -153,7 +190,7 @@ struct PetViewTests {
         )
         let renderer = ImageRenderer(content: bubble)
         let image = try #require(renderer.cgImage)
-        #expect(CGFloat(image.width) / renderer.scale <= PetLayout.bubbleWidth + PetLayout.bubbleShadowInset * 2)
-        #expect(CGFloat(image.height) / renderer.scale == PetLayout.bubbleHeight(rows: 2))
+        #expect(CGFloat(image.width) / renderer.scale == PetLayout.bubbleSize(rows: 3).width)
+        #expect(CGFloat(image.height) / renderer.scale == PetLayout.bubbleSize(rows: 3).height)
     }
 }

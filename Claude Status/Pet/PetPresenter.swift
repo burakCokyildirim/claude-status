@@ -25,15 +25,18 @@ enum PetPresenter {
 
     /// The sessions the speech bubble lists: every one doing something or holding
     /// an answer, in the pet's own order, so the first is the session the pet
-    /// stands for. With none of those, that session alone, so the bubble still
-    /// says whose pet it is.
+    /// stands for, and after them the idle sessions that did something last. Only
+    /// one of those beside busy ones, and up to three when nothing is busy, so the
+    /// bubble still says whose pet it is without filling up with old sessions.
     static func listed(from sessions: [ClaudeSession]) -> [ClaudeSession] {
-        let busy = sessions
-            .filter { $0.state != .idle || $0.isUnread == true }
-            .sorted(by: hasHigherPriority)
-        guard busy.isEmpty else { return busy }
-        return resolve(from: sessions).map { [$0] } ?? []
+        let ranked = sessions.sorted(by: hasHigherPriority)
+        let busy = ranked.filter { $0.state != .idle || $0.isUnread == true }
+        let idle = ranked.filter { $0.state == .idle && $0.isUnread != true }
+        return busy + idle.prefix(busy.isEmpty ? maxIdleListedAlone : maxIdleListedBesideBusy)
     }
+
+    static let maxIdleListedBesideBusy = 1
+    static let maxIdleListedAlone = 3
 
     /// Whether `lhs` outranks `rhs` for the pet.
     ///

@@ -8,7 +8,7 @@ nonisolated extension PetCharacter {
         palette: [
             "b": 0xD1684A, "e": 0x000000, "g": 0x7C7C7B, "w": 0xF4F1EC
         ],
-        badgeCorner: CGPoint(x: 6.3, y: 8.3),
+        badgeCorner: CGPoint(x: 6.3, y: 7.0),
         active: PetRoutine(
             // Rummages behind itself, hauls the laptop up over its head and sets it down.
             enter: [
@@ -88,9 +88,9 @@ nonisolated extension PetCharacter {
         idle: PetRoutine(
             loop: [
                 PetFrame(460, Part.doze.at(0, 5), PetProp.snore.at(14, 3)),
-                PetFrame(460, Part.eyesShut.at(0, 5), PetProp.snore.at(15, 2)),
+                PetFrame(460, Part.sleep.at(0, 5), PetProp.snore.at(15, 2)),
                 PetFrame(460, Part.doze.at(0, 5), PetProp.snore.at(15, 1)),
-                PetFrame(460, Part.eyesShut.at(0, 5), PetProp.snore.at(16, 0)),
+                PetFrame(460, Part.sleep.at(0, 5), PetProp.snore.at(16, 0)),
                 PetFrame(460, Part.doze.at(0, 5)),
             ]
         ),
@@ -436,15 +436,31 @@ nonisolated private enum Part {
         ".......b.b....b.b...",
     ]
 
+    /// Asleep, breathing out: the arms sink a row, and the eyes are shut to lines.
     static let doze: PetPart = [
         "....................",
         "....................",
         "....................",
         "........bbbbbbbb....",
-        "........bbbbbbbb....",
+        "........beebbeeb....",
         "........bbbbbbbb....",
         "......bbbbbbbbbbbb..",
         "......bbbbbbbbbbbb..",
+        "........bbbbbbbb....",
+        "........b.b..b.b....",
+        "........b.b..b.b....",
+    ]
+
+    /// Asleep, breathing in: sitting up as it rests, eyes still shut.
+    static let sleep: PetPart = [
+        "....................",
+        "....................",
+        "....................",
+        "........bbbbbbbb....",
+        "........beebbeeb....",
+        "......bbbbbbbbbbbb..",
+        "......bbbbbbbbbbbb..",
+        "........bbbbbbbb....",
         "........bbbbbbbb....",
         "........b.b..b.b....",
         "........b.b..b.b....",

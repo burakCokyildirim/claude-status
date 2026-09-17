@@ -117,16 +117,22 @@ nonisolated enum PetLayout {
 
     // MARK: - Speech Bubble
 
-    /// The widest the bubble's outline gets; a long session name is what gives way.
-    static let bubbleWidth: CGFloat = 260
-    static let bubbleRowHeight: CGFloat = 26
+    /// The bubble's outline width, the same whatever it lists so it holds still as
+    /// its lines change, and narrower than the session list; a long session name
+    /// is what gives way.
+    static let bubbleWidth: CGFloat = 220
+    /// A line as the session list draws one: the name over the folder, and the
+    /// state over how long ago the session did something.
+    static let bubbleRowHeight: CGFloat = 38
     /// Inside the outline, before the first row and after the last.
     static let bubblePadding: CGFloat = 4
+    static let bubbleCornerRadius: CGFloat = 12
     /// Transparent room around the outline for its shadow.
     static let bubbleShadowInset: CGFloat = 8
-    /// The tail that points the bubble at the badge.
-    static let bubbleTailHeight: CGFloat = 8
-    static let bubbleTailWidth: CGFloat = 16
+    /// The tail that points the bubble at the badge, long enough to lift the
+    /// bubble clear of the pet's head.
+    static let bubbleTailHeight: CGFloat = 14
+    static let bubbleTailWidth: CGFloat = 18
     /// Where the tail sits along the outline when nothing pushes it, from the
     /// outline's left edge.
     static let bubbleTailInset: CGFloat = 26
@@ -135,14 +141,14 @@ nonisolated enum PetLayout {
     /// Past this many sessions, the last row counts the rest instead.
     static let bubbleMaxRows = 8
 
-    /// The outline's corner radius for `rows` rows: a single line reads as a capsule.
-    static func bubbleCornerRadius(rows: Int) -> CGFloat {
-        rows == 1 ? (bubbleRowHeight + bubblePadding * 2) / 2 : 12
-    }
-
     /// The bubble panel's height for `rows` rows, tail included.
     static func bubbleHeight(rows: Int) -> CGFloat {
         CGFloat(rows) * bubbleRowHeight + bubblePadding * 2 + bubbleTailHeight + bubbleShadowInset * 2
+    }
+
+    /// The bubble panel's size for `rows` rows, tail and shadow room included.
+    static func bubbleSize(rows: Int) -> CGSize {
+        CGSize(width: bubbleWidth + bubbleShadowInset * 2, height: bubbleHeight(rows: rows))
     }
 
     /// The row under `point` in a bubble panel of `size`, in the panel's flipped
@@ -172,7 +178,6 @@ nonisolated enum PetLayout {
         size: CGSize,
         target: CGRect,
         below: CGFloat,
-        rows: Int,
         in area: CGRect
     ) -> PetBubblePlacement {
         let aboveY = target.maxY + bubbleTailGap - bubbleShadowInset
@@ -181,7 +186,7 @@ nonisolated enum PetLayout {
         let preferredX = target.midX - bubbleShadowInset - bubbleTailInset
         let x = min(max(preferredX, area.minX), max(area.maxX - size.width, area.minX)).rounded()
         let outlineWidth = size.width - bubbleShadowInset * 2
-        let tailRoom = bubbleCornerRadius(rows: rows) + bubbleTailWidth / 2
+        let tailRoom = bubbleCornerRadius + bubbleTailWidth / 2
         let tailX = min(max(target.midX - x - bubbleShadowInset, tailRoom), max(outlineWidth - tailRoom, tailRoom))
         return PetBubblePlacement(
             frame: CGRect(x: x, y: (isAbove ? aboveY : belowY).rounded(), width: size.width, height: size.height),

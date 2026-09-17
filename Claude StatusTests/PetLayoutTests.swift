@@ -110,18 +110,18 @@ struct PetLayoutTests {
     /// below the pet when there is not, pointing at the badge's middle.
     @Test func bubblePointsItsTailAtTheBadge() {
         let area = CGRect(x: 0, y: 0, width: 1000, height: 800)
-        let size = CGSize(width: 276, height: PetLayout.bubbleHeight(rows: 4))
+        let size = PetLayout.bubbleSize(rows: 4)
         let inset = PetLayout.bubbleShadowInset
         let gap = PetLayout.bubbleTailGap
 
         let badge = CGRect(x: 400, y: 400, width: 20, height: 20)
-        let above = PetLayout.bubblePlacement(size: size, target: badge, below: 330, rows: 4, in: area)
+        let above = PetLayout.bubblePlacement(size: size, target: badge, below: 330, in: area)
         #expect(above.isAbove)
         #expect(above.frame.minY + inset == badge.maxY + gap)
         #expect(above.frame.minX + inset + above.tailX == badge.midX)
 
         let atTheTop = CGRect(x: 400, y: 770, width: 20, height: 20)
-        let below = PetLayout.bubblePlacement(size: size, target: atTheTop, below: 700, rows: 4, in: area)
+        let below = PetLayout.bubblePlacement(size: size, target: atTheTop, below: 700, in: area)
         #expect(!below.isAbove)
         #expect(below.frame.maxY - inset == 700 - gap)
         #expect(below.frame.minX + inset + below.tailX == atTheTop.midX)
@@ -131,18 +131,18 @@ struct PetLayoutTests {
     /// slides along the outline as far as the rounded corner lets it.
     @Test func bubbleKeepsInsideTheWorkingAreaSideways() {
         let area = CGRect(x: 0, y: 0, width: 1000, height: 800)
-        let size = CGSize(width: 276, height: PetLayout.bubbleHeight(rows: 4))
+        let size = PetLayout.bubbleSize(rows: 4)
         let outlineWidth = size.width - PetLayout.bubbleShadowInset * 2
-        let tailRoom = PetLayout.bubbleCornerRadius(rows: 4) + PetLayout.bubbleTailWidth / 2
+        let tailRoom = PetLayout.bubbleCornerRadius + PetLayout.bubbleTailWidth / 2
 
         let right = PetLayout.bubblePlacement(
-            size: size, target: CGRect(x: 985, y: 400, width: 10, height: 10), below: 330, rows: 4, in: area
+            size: size, target: CGRect(x: 985, y: 400, width: 10, height: 10), below: 330, in: area
         )
         #expect(right.frame.maxX == area.maxX)
         #expect(right.tailX == outlineWidth - tailRoom)
 
         let left = PetLayout.bubblePlacement(
-            size: size, target: CGRect(x: 2, y: 400, width: 10, height: 10), below: 330, rows: 4, in: area
+            size: size, target: CGRect(x: 2, y: 400, width: 10, height: 10), below: 330, in: area
         )
         #expect(left.frame.minX == area.minX)
         #expect(left.tailX == tailRoom)
