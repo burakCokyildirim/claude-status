@@ -17,7 +17,7 @@ Download the latest release from the [Releases](https://github.com/gmr/claude-st
 - **Usage analytics** — Tracks time spent in each session state and session concurrency throughout the day. See your daily usage summary and concurrency counts in the menu bar dropdown and desktop widgets.
 - **Session naming** — Use the `/name-session` slash command to label sessions with meaningful names like "API Refactor" or "Bug Fix #421". Names show up in the menu bar and widgets so you always know which session is which.
 - **Desktop widgets** — Multiple native WidgetKit widgets show session status, usage analytics, and concurrency at a glance on your desktop.
-- **Desktop pet** — An optional floating character that sits above your other windows and reflects one session's state, so you notice a session waiting on you without going looking for it. Click it to focus that session, drag it anywhere, right-click for the session list. Off by default; turn it on in Settings, where you can also pick the character, its size, and when it speaks up.
+- **Desktop pet** — An optional floating character that sits above your other windows and reflects one session's state, so you notice a session waiting on you without going looking for it. Click it to focus that session, drag it anywhere, right-click for the session list. Off by default; turn it on in Settings or with the paw button at the top of the menu bar dropdown. Settings is also where you pick the character, its size, and when it speaks up.
 - **Launch at login** — Runs quietly in the menu bar with no dock icon. Configure everything from a simple settings window.
 
 ## Session States

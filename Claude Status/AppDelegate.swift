@@ -358,6 +358,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 onRefresh: { [weak self] in
                     self?.monitor.refresh()
                 },
+                onPetToggle: { [weak self] in
+                    self?.reloadPetSettingsIfNeeded()
+                },
                 onSettings: { [weak self] in
                     self?.closePopover()
                     self?.showSettings()
@@ -639,6 +642,7 @@ private struct PopoverContentView: View {
     @Bindable var monitor: SessionMonitor
     var onSessionTap: (ClaudeSession) -> Void
     var onRefresh: () -> Void
+    var onPetToggle: () -> Void
     var onSettings: () -> Void
     var onQuit: () -> Void
 
@@ -649,6 +653,7 @@ private struct PopoverContentView: View {
             showProfileBadges: monitor.profileStore.enabledProfiles.count > 1,
             onSessionTap: onSessionTap,
             onRefresh: onRefresh,
+            onPetToggle: onPetToggle,
             onSettings: onSettings,
             onQuit: onQuit
         )

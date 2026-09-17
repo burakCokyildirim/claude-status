@@ -8,11 +8,16 @@ struct SessionListView: View {
     var showProfileBadges: Bool = false
     var onSessionTap: ((ClaudeSession) -> Void)?
     var onRefresh: (() -> Void)?
+    /// The pet was shown or hidden from the header, to act on it at once.
+    var onPetToggle: (() -> Void)?
     var onSettings: (() -> Void)?
     var onQuit: (() -> Void)?
 
     @AppStorage("iconStyle", store: AppGroup.defaults)
     private var iconStyle: SessionIconStyle = .emoji
+
+    @AppStorage(PetSettings.Keys.enabled, store: AppGroup.defaults)
+    private var isPetShown = false
 
     @State private var isRefreshing = false
 
@@ -71,6 +76,7 @@ struct SessionListView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
             Spacer()
+            petToggle
             Button(action: {
                 withAnimation(.linear(duration: 0.5)) {
                     isRefreshing = true
@@ -99,6 +105,21 @@ struct SessionListView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// Shows or hides the desktop pet, and stays lit while it is out.
+    private var petToggle: some View {
+        Button {
+            isPetShown.toggle()
+            onPetToggle?()
+        } label: {
+            Image(systemName: "pawprint.fill")
+                .font(.system(size: 10))
+        }
+        .buttonStyle(RoundToggleButtonStyle(isOn: isPetShown))
+        .help(isPetShown ? "Hide Desktop Pet" : "Show Desktop Pet")
+        .accessibilityLabel("Desktop Pet")
+        .accessibilityValue(isPetShown ? "On" : "Off")
     }
 
     private var emptyState: some View {
@@ -171,6 +192,21 @@ struct SessionListView: View {
     ) -> some View {
         MenuButtonView(action: action, label: label)
             .font(menuFont)
+    }
+}
+
+/// A round button filled with the accent colour while what it switches is on, as
+/// Control Center draws its toggles.
+private struct RoundToggleButtonStyle: ButtonStyle {
+    let isOn: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(isOn ? Color.white : Color.secondary)
+            .frame(width: 20, height: 20)
+            .background(Circle().fill(isOn ? Color.accentColor : Color.primary.opacity(0.1)))
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .contentShape(Circle())
     }
 }
 
