@@ -26,7 +26,8 @@ struct PetViewTests {
             scale: scale,
             sessionCount: sessionCount,
             isBubbleShown: isBubbleShown,
-            isBubbleOpen: isBubbleOpen
+            isBubbleOpen: isBubbleOpen,
+            jumpCount: 0
         )
         .frame(width: panel.width, height: panel.height)
         .background(Color.black)

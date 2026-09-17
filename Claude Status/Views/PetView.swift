@@ -25,6 +25,9 @@ struct PetView: View {
     let isBubbleShown: Bool
     /// The bubble's list is open: the badge draws in to a dot, the bubble's mouth.
     let isBubbleOpen: Bool
+    /// Counts the hops asked for. Every change of it sends the character up and
+    /// down once: a session took up something new, or it was clicked.
+    let jumpCount: Int
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -33,6 +36,15 @@ struct PetView: View {
 
             sprite
                 .frame(width: petRect.width, height: petRect.height)
+                .keyframeAnimator(initialValue: CGFloat.zero, trigger: jumpCount) { pet, lift in
+                    // Whole points: half a point of lift blurs the pixel art.
+                    pet.offset(y: -lift.rounded())
+                } keyframes: { _ in
+                    KeyframeTrack {
+                        SpringKeyframe(scale * 2, duration: 0.16, spring: .snappy)
+                        SpringKeyframe(0, duration: 0.28, spring: .bouncy)
+                    }
+                }
                 .offset(x: petRect.minX, y: petRect.minY)
 
             if showsBadge {

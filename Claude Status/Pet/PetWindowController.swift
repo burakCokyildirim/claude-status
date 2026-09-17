@@ -41,6 +41,11 @@ final class PetWindowController: NSObject {
     private var sessionCount = 0
     /// The first update starts the pet in its mood rather than moving it there.
     private var hasApplied = false
+    /// What every session was up to when the pet last looked, so it can hop when
+    /// one of them takes up something new.
+    private var sessionMoods: [String: PetMood] = [:]
+    /// Counts the hops asked for; the view plays one on every change.
+    private var jumpCount = 0
 
     // MARK: Animation state
 
@@ -267,6 +272,18 @@ final class PetWindowController: NSObject {
         // are doing something behind the one the pet stands for. An unread one
         // counts — the hook calls it idle, but it is holding an answer.
         let busyCount = sessions.count { $0.state != .idle || $0.isUnread == true }
+
+        // Something happening anywhere is worth a hop, whichever session the pet
+        // is standing for. Never on the first update, which is the pet arriving.
+        let moods = Dictionary(
+            sessions.map { ($0.sessionId, PetMood(state: $0.state, isUnread: $0.isUnread == true)) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let hops = hasApplied && !reduceMotion && Self.hops(from: sessionMoods, to: moods)
+        sessionMoods = moods
+        if hops {
+            jumpCount += 1
+        }
         // Kept up to date even when nothing on screen changes, so a click and the
         // bubble's times go by the session as it is now.
         session = resolved
@@ -275,7 +292,7 @@ final class PetWindowController: NSObject {
         // The tick that feeds this fires every second whether or not anything
         // moved; without this the pet would rebuild its view once a second for
         // nothing.
-        guard sessionChanged || busyCount != sessionCount || !hasApplied else {
+        guard sessionChanged || busyCount != sessionCount || hops || !hasApplied else {
             // A line's "2m ago" moves on while nothing else does.
             if !bubbleRows.isEmpty, bubbleRows != drawnBubbleRows {
                 layoutBubble()
@@ -296,6 +313,20 @@ final class PetWindowController: NSObject {
         playDisplayedMood()
         render()
         updateAnimationDriver()
+    }
+
+    /// Whether anything happened worth hopping for: a session took up a new mood,
+    /// or a session turned up. One going away does not count — the Claude app
+    /// stops idle sessions on its own, and that is housekeeping, not news.
+    nonisolated static func hops(from previous: [String: PetMood], to current: [String: PetMood]) -> Bool {
+        current.contains { session, mood in previous[session] != mood }
+    }
+
+    /// Sends the pet up and down once, unless motion is reduced.
+    private func hop() {
+        guard !reduceMotion else { return }
+        jumpCount += 1
+        render()
     }
 
     /// Whether two lists of sessions would draw the same bubble.
@@ -334,7 +365,8 @@ final class PetWindowController: NSObject {
             scale: settings.size.scale,
             sessionCount: sessionCount,
             isBubbleShown: isBubbleShown,
-            isBubbleOpen: isBubbleShown && isBubbleOpen
+            isBubbleOpen: isBubbleShown && isBubbleOpen,
+            jumpCount: jumpCount
         )
     }
 
@@ -686,6 +718,7 @@ final class PetWindowController: NSObject {
     /// A click that stayed put: focus the session the pet stands for.
     func petWasClicked() {
         guard let session else { return }
+        hop()
         onFocus(session)
     }
 
@@ -719,6 +752,7 @@ final class PetWindowController: NSObject {
         if sessions.count > PetLayout.bubbleMaxRows, row == PetLayout.bubbleMaxRows - 1 {
             DispatchQueue.main.async { [weak self] in self?.onShowSessionList() }
         } else if sessions.indices.contains(row) {
+            hop()
             onFocus(sessions[row])
         }
     }

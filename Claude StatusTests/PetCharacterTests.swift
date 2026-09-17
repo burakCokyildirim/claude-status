@@ -206,6 +206,17 @@ struct PetPlaybackTests {
         #expect(delay(onScreen: true, reduceMotion: true, due: 10.25) == nil)
     }
 
+    /// The pet hops when a session takes up something new, and stays put for the
+    /// housekeeping the Claude app does on its own.
+    @Test func thePetHopsWhenASessionTakesUpSomethingNew() {
+        let before = ["a": PetMood.active, "b": .idle]
+
+        #expect(PetWindowController.hops(from: before, to: ["a": .waiting, "b": .idle]))
+        #expect(PetWindowController.hops(from: before, to: ["a": .active, "b": .idle, "c": .active]))
+        #expect(!PetWindowController.hops(from: before, to: before))
+        #expect(!PetWindowController.hops(from: before, to: ["a": .active]))
+    }
+
     /// A pet that was off screen does not race through the frames it missed.
     @Test func stepsOnceAfterAPause() {
         var playback = PetPlayback(character: Self.character, mood: .active, now: 0)
