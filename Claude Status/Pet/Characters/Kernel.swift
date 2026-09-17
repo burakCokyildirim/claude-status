@@ -9,6 +9,7 @@ nonisolated extension PetCharacter {
             "o": 0x3B2A12, "b": 0xE8C35C, "h": 0xFFF1CB, "s": 0xA87F2E,
             "e": 0x241804, "w": 0xF7F3E8
         ],
+        badgeCorner: CGPoint(x: 2.8, y: 4.8),
         active: PetRoutine(
             // One tile at a time: a squash, a pop, and the tile floats up out of the head,
             // drifting outwards, to puff away at the top row.

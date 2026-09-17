@@ -8,6 +8,7 @@ nonisolated extension PetCharacter {
         palette: [
             "b": 0xD1684A, "e": 0x000000, "g": 0x7C7C7B, "w": 0xF4F1EC
         ],
+        badgeCorner: CGPoint(x: 6.3, y: 8.3),
         active: PetRoutine(
             // Rummages behind itself, hauls the laptop up over its head and sets it down.
             enter: [

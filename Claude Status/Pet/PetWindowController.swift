@@ -68,9 +68,20 @@ final class PetWindowController: NSObject {
     private var isBubbleOpen = false
     /// Which side of the pet the bubble was last placed on.
     private var isBubbleAbove = true
+    /// Where its tail meets the outline, from the outline's left edge.
+    private var bubbleTailX: CGFloat = PetLayout.bubbleTailInset
+    /// Whether the bubble is out of the badge, as opposed to drawn in to it — on
+    /// its way up or down, or waiting to be taken down.
+    private var isBubbleOut = false
+    /// The lines the bubble draws: the last it was laid out with, so it can draw
+    /// back into the badge with them after the list they stood for is gone.
+    private var drawnBubbleRows: [PetBubbleRow] = []
     /// Bumped on every pointer change, so a close still waiting out its grace
     /// period drops out when the pointer comes back.
     private var bubbleCloseGeneration = 0
+    /// Bumped whenever the bubble is laid out or put away, so a burst or a
+    /// take-down scheduled for an earlier one drops out.
+    private var bubbleShowGeneration = 0
 
     /// Long enough to cross from the pet to its bubble, or to stray off the
     /// bubble for a moment.
@@ -172,7 +183,10 @@ final class PetWindowController: NSObject {
         isPointerOverBubble = false
         hoveredRow = nil
         isBubbleOpen = false
+        isBubbleOut = false
+        drawnBubbleRows = []
         bubbleCloseGeneration += 1
+        bubbleShowGeneration += 1
         // Drops any re-clamp still waiting out its debounce.
         screenChangeGeneration += 1
 
@@ -299,17 +313,19 @@ final class PetWindowController: NSObject {
     }
 
     private func makeView() -> PetView {
-        PetView(
+        let isBubbleShown = !bubbleRows.isEmpty
+        return PetView(
             character: playback.character,
             frame: reduceMotion ? playback.character.still(for: playback.target) : playback.frame,
-            // The bubble and the badge follow the session at once, while the drawing
+            // The bubble and the badge follow the mood at once, while the drawing
             // may still be playing an exit or an entrance on its way there. On
-            // purpose: the words are the exact part, and a second of the character
+            // purpose: they are the exact part, and a second of the character
             // catching up reads as it reacting.
-            state: session?.state,
-            isUnread: session?.isUnread == true,
+            mood: displayedMood,
             scale: settings.size.scale,
-            sessionCount: sessionCount
+            sessionCount: sessionCount,
+            isBubbleShown: isBubbleShown,
+            isBubbleOpen: isBubbleShown && isBubbleOpen
         )
     }
 
@@ -359,11 +375,17 @@ final class PetWindowController: NSObject {
     }
 
     private func makeBubble() -> PetBubbleView {
-        PetBubbleView(rows: bubbleRows, isAbove: isBubbleAbove, highlighted: isPointerOverBubble ? hoveredRow : nil)
+        PetBubbleView(
+            rows: drawnBubbleRows,
+            isAbove: isBubbleAbove,
+            highlighted: isPointerOverBubble ? hoveredRow : nil,
+            tailX: bubbleTailX,
+            isShown: isBubbleOut
+        )
     }
 
-    /// Fills, sizes, and places the bubble, or takes it down when it has nothing
-    /// to show.
+    /// Fills, sizes, and places the bubble, bursting it out of the badge if it was
+    /// not already out, or puts it away when it has nothing to show.
     private func layoutBubble() {
         guard let panel, let bubblePanel, let bubbleView else { return }
         let rows = bubbleRows
@@ -371,17 +393,35 @@ final class PetWindowController: NSObject {
             // A panel taken down under the pointer never reports it leaving.
             isPointerOverBubble = false
             hoveredRow = nil
-            if bubblePanel.parent != nil { panel.removeChildWindow(bubblePanel) }
-            if bubblePanel.isVisible { bubblePanel.orderOut(nil) }
+            putBubbleAway()
             return
         }
 
+        bubbleShowGeneration += 1
+        let wasOut = isBubbleOut && bubblePanel.parent === panel && bubblePanel.isVisible
+        isBubbleOut = wasOut
+        drawnBubbleRows = rows
         bubbleView.bubble = makeBubble()
+
+        // The tail points at the badge as it is drawn: its dot while the list is open.
+        let badge = PetLayout.badgeRect(
+            scale: settings.size.scale,
+            corner: playback.character.badgeCorner,
+            count: sessionCount,
+            isBubbleOpen: isBubbleOpen
+        )
         let size = CGSize(width: bubbleView.bubbleWidth, height: PetLayout.bubbleHeight(rows: rows.count))
         let area = Self.screen(holding: pet, among: Self.currentScreens())?.workingArea ?? pet
-        let placement = PetLayout.bubblePlacement(size: size, petRect: pet, in: area)
-        if placement.isAbove != isBubbleAbove {
+        let placement = PetLayout.bubblePlacement(
+            size: size,
+            target: PetLayout.screenRect(badge, inPanelAt: panel.frame),
+            below: pet.minY,
+            rows: rows.count,
+            in: area
+        )
+        if placement.isAbove != isBubbleAbove || placement.tailX != bubbleTailX {
             isBubbleAbove = placement.isAbove
+            bubbleTailX = placement.tailX
             bubbleView.bubble = makeBubble()
         }
         if bubblePanel.frame != placement.frame {
@@ -389,6 +429,35 @@ final class PetWindowController: NSObject {
         }
         if bubblePanel.parent !== panel || !bubblePanel.isVisible {
             panel.addChildWindow(bubblePanel, ordered: .above)
+        }
+        guard !wasOut else { return }
+
+        // Out of the badge on the next turn of the run loop, once the panel is up
+        // at its final size with the bubble still drawn in, for SwiftUI to
+        // animate from.
+        let generation = bubbleShowGeneration
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.bubbleShowGeneration == generation else { return }
+            self.isBubbleOut = true
+            self.bubbleView?.bubble = self.makeBubble()
+        }
+    }
+
+    /// Draws the bubble back into the badge with the lines it last showed, then
+    /// takes its panel down.
+    private func putBubbleAway() {
+        guard let panel, let bubblePanel, let bubbleView,
+              bubblePanel.parent != nil || bubblePanel.isVisible else { return }
+        bubbleShowGeneration += 1
+        let generation = bubbleShowGeneration
+        if isBubbleOut {
+            isBubbleOut = false
+            bubbleView.bubble = makeBubble()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + PetBubbleView.drawInDuration) { [weak self] in
+            guard let self, self.bubbleShowGeneration == generation, let bubblePanel = self.bubblePanel else { return }
+            if bubblePanel.parent != nil { panel.removeChildWindow(bubblePanel) }
+            bubblePanel.orderOut(nil)
         }
     }
 
@@ -411,6 +480,9 @@ final class PetWindowController: NSObject {
         bubbleDidChange(resized: isBubbleOpen != wasOpen)
     }
 
+    /// Redraws the bubble — laying it out again when it opened, closed, or
+    /// changed size — along with the badge, and moves the drawing to the mood
+    /// now on screen.
     private func bubbleDidChange(resized: Bool) {
         if resized {
             layoutBubble()
@@ -419,9 +491,14 @@ final class PetWindowController: NSObject {
         }
         let before = playback.target
         playDisplayedMood()
-        guard playback.target != before else { return }
+        let moodChanged = playback.target != before
+        // The badge draws in or out when the list opens or closes, and takes the
+        // colour of whatever mood is now on screen.
+        guard resized || moodChanged else { return }
         render()
-        updateAnimationDriver()
+        if moodChanged {
+            updateAnimationDriver()
+        }
     }
 
     // MARK: - Animation Driver

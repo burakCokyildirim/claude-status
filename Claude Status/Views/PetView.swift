@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Draws the desktop pet: the character sprite, and the badge that says how many
-/// sessions it is standing in for. The speech bubble has a panel of its own.
+/// Draws the desktop pet: the character sprite, and the badge up at its top left
+/// that counts the sessions it is standing in for. The speech bubble has a panel
+/// of its own and points its tail at that badge.
 ///
 /// Purely a renderer. It takes no gestures and no hover, because SwiftUI's
 /// gesture and hover machinery is unreliable in a window that never becomes key;
@@ -11,16 +12,19 @@ struct PetView: View {
     let character: PetCharacter
     /// The drawing to show, picked by `PetWindowController`.
     let frame: PetFrame
-    let state: SessionState?
-    /// Claude has spoken here since the user last looked. Shown in its own
-    /// colour rather than folded into `state`, because "there is something to
-    /// read" is a different claim from "this session is blocked on you".
-    let isUnread: Bool
+    /// The mood on screen, which the badge takes its colour from: the pet's own
+    /// session, or the bubble line the pointer is on.
+    let mood: PetMood
     let scale: CGFloat
     /// Sessions that are doing something, so the badge can say the pet is
     /// showing one of several. Idle sessions are left out: a machine can carry
     /// dozens of them for days without any of them wanting attention.
     let sessionCount: Int
+    /// A bubble is up and points at the badge, so there has to be a badge even
+    /// with nothing to count.
+    let isBubbleShown: Bool
+    /// The bubble's list is open: the badge draws in to a dot, the bubble's mouth.
+    let isBubbleOpen: Bool
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -31,11 +35,12 @@ struct PetView: View {
                 .frame(width: petRect.width, height: petRect.height)
                 .offset(x: petRect.minX, y: petRect.minY)
 
-            if sessionCount > 1 {
-                countBadge
-                    .offset(x: badgeRect.minX, y: badgeRect.minY)
+            if showsBadge {
+                badge
+                    .transition(.scale(scale: 0.2, anchor: dotCenter).combined(with: .opacity))
             }
         }
+        .animation(Self.badgeSpring, value: showsBadge)
         .allowsHitTesting(false)
     }
 
@@ -63,17 +68,46 @@ struct PetView: View {
 
     // MARK: - Badge
 
-    private var countBadge: some View {
-        Text("\(sessionCount)")
-            .font(.system(size: badgeRect.height * 0.6, weight: .bold, design: .rounded))
-            .foregroundStyle(.white)
-            .frame(width: badgeRect.width, height: badgeRect.height)
-            .background(Circle().fill(PetMood(state: state, isUnread: isUnread).accent))
-            .overlay(Circle().stroke(Color.black.opacity(0.35), lineWidth: 1))
+    private static let badgeSpring = Animation.spring(response: 0.3, dampingFraction: 0.72)
+
+    private var showsBadge: Bool { sessionCount > 1 || isBubbleShown }
+
+    /// Where the badge comes from and goes to, as a point of the whole panel.
+    private var dotCenter: UnitPoint {
+        let dot = PetLayout.badgeDotRect(scale: scale, corner: character.badgeCorner)
+        let panel = PetLayout.panelSize(scale: scale)
+        return UnitPoint(x: dot.midX / panel.width, y: dot.midY / panel.height)
+    }
+
+    /// A pill with the count, or the dot it draws in to.
+    private var badge: some View {
+        let isDot = PetLayout.isBadgeDot(count: sessionCount, isBubbleOpen: isBubbleOpen)
+        let rect = PetLayout.badgeRect(
+            scale: scale,
+            corner: character.badgeCorner,
+            count: sessionCount,
+            isBubbleOpen: isBubbleOpen
+        )
+        return Capsule()
+            .fill(mood.accent)
+            .overlay(Capsule().stroke(Color.white.opacity(0.9), lineWidth: isDot ? 1 : 1.5))
+            .overlay(
+                Text("\(sessionCount)")
+                    .font(.system(size: PetLayout.badgeFontSize(scale: scale), weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                    .fixedSize()
+                    .opacity(isDot ? 0 : 1)
+                    .scaleEffect(isDot ? 0.4 : 1)
+            )
+            .shadow(color: .black.opacity(0.35), radius: 1.5, y: 1)
+            .frame(width: rect.width, height: rect.height)
+            .position(x: rect.midX, y: rect.midY)
+            .animation(Self.badgeSpring, value: isDot)
+            .animation(.easeInOut(duration: 0.2), value: mood)
     }
 
     // MARK: - Geometry
 
     private var petRect: CGRect { PetLayout.petRect(scale: scale) }
-    private var badgeRect: CGRect { PetLayout.badgeRect(scale: scale) }
 }

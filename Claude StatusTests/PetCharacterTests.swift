@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 @testable import Claude_Status
@@ -109,6 +110,7 @@ struct PetPlaybackTests {
     /// second each: `E` enter, `L` loop, `X` exit.
     private static let character = PetCharacter(
         palette: [:],
+        badgeCorner: .zero,
         active: PetRoutine(enter: frames("E", 2), loop: frames("L", 3), exit: frames("X", 2)),
         waiting: PetRoutine(loop: frames("W", 2)),
         unread: PetRoutine(loop: frames("U", 1)),

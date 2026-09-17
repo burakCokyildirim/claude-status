@@ -9,6 +9,7 @@ nonisolated extension PetCharacter {
             "o": 0x171C26, "b": 0x4E6B99, "h": 0x7FA0CE, "s": 0x35496B,
             "v": 0x10141C, "c": 0x7FE3FF, "e": 0x0A0C10, "w": 0xF2F5F8
         ],
+        badgeCorner: CGPoint(x: 2.6, y: 3.6),
         active: PetRoutine(
             enter: [
                 PetFrame(140, Part.legs.at(0, 13), Part.head.at(0, 4)),

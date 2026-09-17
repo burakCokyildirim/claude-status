@@ -12,19 +12,21 @@ struct PetViewTests {
     private func renderPet(
         _ frame: PetFrame,
         character: PetCharacter,
-        state: SessionState = .waiting,
-        isUnread: Bool = false,
-        sessionCount: Int = 1
+        mood: PetMood = .waiting,
+        sessionCount: Int = 1,
+        isBubbleShown: Bool = false,
+        isBubbleOpen: Bool = false
     ) throws -> CGImage {
         let scale = PetSize.default.scale
         let panel = PetLayout.panelSize(scale: scale)
         let view = PetView(
             character: character,
             frame: frame,
-            state: state,
-            isUnread: isUnread,
+            mood: mood,
             scale: scale,
-            sessionCount: sessionCount
+            sessionCount: sessionCount,
+            isBubbleShown: isBubbleShown,
+            isBubbleOpen: isBubbleOpen
         )
         .frame(width: panel.width, height: panel.height)
         .background(Color.black)
@@ -38,6 +40,13 @@ struct PetViewTests {
     /// anti-aliased cell edges add blends of them.
     private func distinctColours(in image: CGImage) -> Int {
         Set(pixels(of: image)).count
+    }
+
+    /// The pixels of `image` inside `rect`, in the points it was laid out in.
+    private func pixels(of image: CGImage, in rect: CGRect) throws -> [UInt32] {
+        let scale = CGFloat(image.width) / PetLayout.panelSize(scale: PetSize.default.scale).width
+        let crop = CGRect(x: rect.minX * scale, y: rect.minY * scale, width: rect.width * scale, height: rect.height * scale)
+        return pixels(of: try #require(image.cropping(to: crop.integral)))
     }
 
     private func pixels(of image: CGImage) -> [UInt32] {
@@ -73,18 +82,43 @@ struct PetViewTests {
     @Test func anUnreadPetsBadgeIsDrawnInItsOwnColour() throws {
         let nibble = Self.nibble
         let frame = nibble.still(for: .unread)
-        let unread = try renderPet(frame, character: nibble, state: .idle, isUnread: true, sessionCount: 2)
-        let idle = try renderPet(frame, character: nibble, state: .idle, isUnread: false, sessionCount: 2)
+        let unread = try renderPet(frame, character: nibble, mood: .unread, sessionCount: 2)
+        let idle = try renderPet(frame, character: nibble, mood: .idle, sessionCount: 2)
 
-        #expect(pixelCount(in: unread, near: SessionPalette.unread) > 0)
-        #expect(pixelCount(in: idle, near: SessionPalette.unread) == 0)
+        #expect(pixelCount(in: pixels(of: unread), near: SessionPalette.unread) > 0)
+        #expect(pixelCount(in: pixels(of: idle), near: SessionPalette.unread) == 0)
+    }
+
+    /// While the bubble's list is open the badge draws in to a dot of its colour,
+    /// with no count; and with only one session to show, the badge is there only
+    /// while a bubble points at it.
+    @Test func theBadgeDrawsInWhileTheListIsOpen() throws {
+        let nibble = Self.nibble
+        let frame = nibble.still(for: .waiting)
+        let scale = PetSize.default.scale
+        let badge = PetLayout.badgeRect(scale: scale, corner: nibble.badgeCorner, digits: 1)
+
+        let counting = try pixels(of: renderPet(frame, character: nibble, sessionCount: 3), in: badge)
+        let open = try pixels(
+            of: renderPet(frame, character: nibble, sessionCount: 3, isBubbleShown: true, isBubbleOpen: true),
+            in: badge
+        )
+        #expect(pixelCount(in: counting, near: .white) > 0)
+        #expect(pixelCount(in: open, near: .white) == 0)
+        #expect(pixelCount(in: open, near: PetMood.waiting.accent) > 0)
+        #expect(pixelCount(in: open, near: PetMood.waiting.accent) < pixelCount(in: counting, near: PetMood.waiting.accent))
+
+        let alone = try pixels(of: renderPet(frame, character: nibble), in: badge)
+        let pointedAt = try pixels(of: renderPet(frame, character: nibble, isBubbleShown: true), in: badge)
+        #expect(pixelCount(in: alone, near: PetMood.waiting.accent) == 0)
+        #expect(pixelCount(in: pointedAt, near: PetMood.waiting.accent) > 0)
     }
 
     /// Pixels within a few steps of `colour` on every channel.
-    private func pixelCount(in image: CGImage, near colour: Color) -> Int {
+    private func pixelCount(in pixels: [UInt32], near colour: Color) -> Int {
         let resolved = colour.resolve(in: EnvironmentValues())
         let target = [resolved.red, resolved.green, resolved.blue].map { Int(($0 * 255).rounded()) }
-        return pixels(of: image).count { pixel in
+        return pixels.count { pixel in
             let channels = [Int(pixel & 0xFF), Int(pixel >> 8 & 0xFF), Int(pixel >> 16 & 0xFF)]
             return zip(channels, target).allSatisfy { abs($0 - $1) <= 6 }
         }
@@ -113,7 +147,9 @@ struct PetViewTests {
                 PetBubbleRow(title: "short", stateLabel: "Active", accent: .green),
             ],
             isAbove: true,
-            highlighted: 1
+            highlighted: 1,
+            tailX: PetLayout.bubbleTailInset,
+            isShown: true
         )
         let renderer = ImageRenderer(content: bubble)
         let image = try #require(renderer.cgImage)

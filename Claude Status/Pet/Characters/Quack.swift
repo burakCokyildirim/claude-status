@@ -10,6 +10,7 @@ nonisolated extension PetCharacter {
             "k": 0xF28B30, "e": 0x161616, "g": 0x6F7784, "v": 0xD6EEFF,
             "w": 0xF4F1EC
         ],
+        badgeCorner: CGPoint(x: 2.3, y: 4.3),
         active: PetRoutine(
             // Lowers the glass and blinks, puts it back up, then a run of hops.
             loop: [

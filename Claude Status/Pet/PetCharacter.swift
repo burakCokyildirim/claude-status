@@ -121,12 +121,17 @@ nonisolated struct PetCharacter {
     let idle: PetRoutine
     let resting: PetRoutine
 
+    /// Where the count badge's bottom-right corner sits, in canvas cells: up and
+    /// to the left of the character's head, so the badge grows away from it.
+    let badgeCorner: CGPoint
+
     /// Fixed rather than theme-derived: the pet floats over arbitrary wallpapers,
     /// so it carries its own contrast instead of borrowing the system appearance.
     private let palette: [Character: Color]
 
     init(
         palette: [Character: UInt32],
+        badgeCorner: CGPoint,
         active: PetRoutine,
         waiting: PetRoutine,
         unread: PetRoutine,
@@ -141,6 +146,7 @@ nonisolated struct PetCharacter {
                 blue: Double(rgb & 0xFF) / 255
             )
         }
+        self.badgeCorner = badgeCorner
         self.active = active
         self.waiting = waiting
         self.unread = unread
