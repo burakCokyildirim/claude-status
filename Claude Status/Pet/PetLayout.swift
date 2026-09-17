@@ -43,12 +43,12 @@ nonisolated enum PetLayout {
     /// The count badge's height: it grows a little with the pet, within the range
     /// a badge reads well in.
     static func badgeHeight(scale: CGFloat) -> CGFloat {
-        min(max((scale * 3.5).rounded(), 20), 30)
+        min(max((scale * 3.1).rounded(), 18), 26)
     }
 
     /// The count's point size inside the badge.
     static func badgeFontSize(scale: CGFloat) -> CGFloat {
-        (badgeHeight(scale: scale) * 0.62).rounded()
+        (badgeHeight(scale: scale) * 0.6).rounded()
     }
 
     /// The badge inside the panel, as a pill wide enough for `digits`.
