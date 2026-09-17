@@ -742,7 +742,7 @@ struct ClaudeDesktopTests {
     @Test func linksToRemoteSessionsOnlyByTheirIds() {
         #expect(
             SessionFocuser.claudeDesktopURL(forRemoteSession: "session_018TJSkQZbYQzh9igkcYjrte")?.absoluteString
-                == "claude://code/session_018TJSkQZbYQzh9igkcYjrte"
+                == "claude://claude.ai/code/session_018TJSkQZbYQzh9igkcYjrte"
         )
         #expect(SessionFocuser.claudeDesktopURL(forRemoteSession: "local_2222-bbbb") == nil)
         #expect(SessionFocuser.claudeDesktopURL(forRemoteSession: "session_x/../continue") == nil)

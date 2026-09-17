@@ -159,7 +159,7 @@ Sessions run by the Claude desktop app carry one signal the hook cannot give: **
 
 **Claude desktop app** (via `CLAUDE_CODE_ENTRYPOINT=claude-desktop` on the Claude process): opens the exact session with `claude://code/continue`, matched through the app's `claude-code-sessions` records
 
-**Remote Control** (a process no terminal or IDE owns, as when a script starts `claude --remote-control`, whose transcript records a `bridge-session`): shown as Claude too, since that is where the user reaches it. A click sends `claude://code/session_…` and brings the app forward; the app gates that link behind a feature switch and ignores it while the switch is off. Without a bridge, such a process still falls back to Terminal
+**Remote Control** (a process no terminal or IDE owns, as when a script starts `claude --remote-control`, whose transcript records a `bridge-session`): shown as Claude too, since that is where the user reaches it. A click sends `claude://claude.ai/code/session_…`, which opens the session, and brings the app forward; the shorter `claude://code/session_…` waits on a feature switch in the app and is dropped while it is off. Without a bridge, such a process still falls back to Terminal
 
 ### Desktop Pet
 

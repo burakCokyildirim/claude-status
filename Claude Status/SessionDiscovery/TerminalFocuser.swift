@@ -58,9 +58,8 @@ struct SessionFocuser {
             NSWorkspace.shared.open(url)
             return
         }
-        // Bridged by Remote Control. The app puts its link for these behind a
-        // feature switch and quietly ignores it while that is off, so the app is
-        // brought forward either way.
+        // Bridged by Remote Control. Should the app refuse the link, it still
+        // comes forward.
         if let remote = session.remoteSessionId,
            let url = Self.claudeDesktopURL(forRemoteSession: remote) {
             NSWorkspace.shared.open(url)
@@ -69,7 +68,11 @@ struct SessionFocuser {
     }
 
     /// The desktop app's link to a session it shows through Remote Control:
-    /// `claude://code/session_…`. Anything but such an ID is refused.
+    /// `claude://claude.ai/code/session_…`. The app also routes the shorter
+    /// `claude://code/session_…`, but holds that form behind a feature switch
+    /// and drops it while the switch is off ("code session deep link gated off"
+    /// in its log); the claude.ai form reaches the same handler without it.
+    /// Anything but a `session_` ID is refused.
     static func claudeDesktopURL(forRemoteSession remoteSessionId: String) -> URL? {
         let prefix = "session_"
         let suffix = remoteSessionId.dropFirst(prefix.count)
@@ -80,8 +83,8 @@ struct SessionFocuser {
         }
         var components = URLComponents()
         components.scheme = "claude"
-        components.host = "code"
-        components.path = "/" + remoteSessionId
+        components.host = "claude.ai"
+        components.path = "/code/" + remoteSessionId
         return components.url
     }
 
