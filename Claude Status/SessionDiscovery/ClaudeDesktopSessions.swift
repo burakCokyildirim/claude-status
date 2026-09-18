@@ -329,6 +329,19 @@ struct ClaudeDesktopSessionStore {
         return title
     }
 
+    /// Drops what was read for sessions that are no longer live.
+    ///
+    /// Answers are pruned against the desktop app's own records, but a title and a
+    /// bridge are read for every session whatever runs it, so without this the app
+    /// would keep an entry for every session it has ever seen — and it is meant to
+    /// run for weeks. A scan that lists nothing keeps everything, the way the marks
+    /// and the answers do.
+    mutating func forget(sessionsOtherThan live: Set<String>) {
+        guard !live.isEmpty else { return }
+        titles = titles.filter { live.contains($0.key) }
+        remoteSessions = remoteSessions.filter { live.contains($0.key) }
+    }
+
     /// The title Claude Code last wrote into a transcript: one the user gave the
     /// session, or else one it made up itself.
     static func title(inTranscript transcript: URL) -> String? {

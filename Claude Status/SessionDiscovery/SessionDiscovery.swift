@@ -59,6 +59,7 @@ struct SessionDiscovery {
         sessions += desktopSessions.stoppedUnread(
             running: sessions, cstatusFiles: cstatusFiles, projectsDirectories: profiles.map(\.projectsDirectory)
         )
+        desktopSessions.forget(sessionsOtherThan: Set(sessions.map(\.sessionId)))
         return DiscoveryResult(sessions: sessions, cstatusFiles: cstatusFiles)
     }
 
@@ -87,6 +88,7 @@ struct SessionDiscovery {
         sessions += desktopSessions.stoppedUnread(
             running: sessions, cstatusFiles: cstatusFiles, projectsDirectories: profiles.map(\.projectsDirectory)
         )
+        desktopSessions.forget(sessionsOtherThan: Set(sessions.map(\.sessionId)))
         return DiscoveryResult(sessions: sessions, cstatusFiles: cstatusFiles)
     }
 

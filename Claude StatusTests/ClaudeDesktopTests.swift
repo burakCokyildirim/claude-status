@@ -682,6 +682,28 @@ struct ClaudeDesktopTests {
         #expect(later == "Second")
     }
 
+    /// The app runs for weeks. What it read for a session it can no longer see is
+    /// dropped, so the caches do not grow one entry per session for ever; a scan
+    /// that lists nothing drops nothing.
+    @Test func whatWasReadForAGoneSessionIsForgotten() throws {
+        let transcript = try makeTranscript([#"{"type":"custom-title","customTitle":"First","sessionId":"s"}"#])
+        defer { try? FileManager.default.removeItem(at: transcript) }
+        var store = ClaudeDesktopSessionStore(roots: [], defaults: makeDefaults()) { false }
+        let start = Date()
+
+        #expect(store.title("s", transcript: transcript, now: start) == "First")
+        try append(line: #"{"type":"custom-title","customTitle":"Second","sessionId":"s"}"#, to: transcript)
+
+        // Still cached while the session is live, and through an empty scan.
+        store.forget(sessionsOtherThan: ["s"])
+        store.forget(sessionsOtherThan: [])
+        #expect(store.title("s", transcript: transcript, now: start.addingTimeInterval(5)) == "First")
+
+        // Gone: nothing is held for it, so the next read starts over.
+        store.forget(sessionsOtherThan: ["other"])
+        #expect(store.title("s", transcript: transcript, now: start.addingTimeInterval(5)) == "Second")
+    }
+
     // MARK: - Focus log
 
     @Test func theFocusLogReadsTheLastSwitch() throws {
