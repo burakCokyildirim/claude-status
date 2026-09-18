@@ -1,12 +1,12 @@
-project := "Claude Status.xcodeproj"
-scheme := "Claude Status"
+project := "Clawde.xcodeproj"
+scheme := "Clawde"
 # Override deployment target for CI/older Xcode that doesn't know macOS 26.2
 xcode_flags := "CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=NO MACOSX_DEPLOYMENT_TARGET=15.0"
-app_name := "Claude Status"
-team_id := env_var_or_default("DEVELOPMENT_TEAM", "6ZWB9X826X")
+app_name := "Clawde"
+team_id := env_var_or_default("DEVELOPMENT_TEAM", "TXQN7T6NNQ")
 # App group override for forks: team-prefixed groups (TEAMID.name) need no
 # provisioning profile on macOS, unlike the group.* release identifier.
-app_group := env_var_or_default("APP_GROUP_ID", "group.com.poisonpenllc.Claude-Status")
+app_group := env_var_or_default("APP_GROUP_ID", "group.com.burakcokyildirim.clawde")
 
 # Calculate version from git tags: tag + .devN for unreleased commits
 version := `tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0"); commits=$(git rev-list --count "$tag"...HEAD 2>/dev/null || echo "0"); if [ "$commits" -gt 0 ]; then echo "$tag.dev$commits"; else echo "$tag"; fi`
@@ -14,11 +14,11 @@ version := `tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0"); c
 # Build the Rust plugin binaries and copy to the plugin scripts directory
 build-plugin:
     cd clawde-plugin && cargo build --release
-    mkdir -p clawde-plugin/plugins/claude-status/scripts
-    cp clawde-plugin/target/release/session-status clawde-plugin/plugins/claude-status/scripts/
-    cp clawde-plugin/target/release/set-session-name clawde-plugin/plugins/claude-status/scripts/
-    codesign -fs - clawde-plugin/plugins/claude-status/scripts/session-status
-    codesign -fs - clawde-plugin/plugins/claude-status/scripts/set-session-name
+    mkdir -p clawde-plugin/plugins/clawde/scripts
+    cp clawde-plugin/target/release/session-status clawde-plugin/plugins/clawde/scripts/
+    cp clawde-plugin/target/release/set-session-name clawde-plugin/plugins/clawde/scripts/
+    codesign -fs - clawde-plugin/plugins/clawde/scripts/session-status
+    codesign -fs - clawde-plugin/plugins/clawde/scripts/set-session-name
 
 # Build debug configuration (unsigned, for CI and fast iteration)
 build: build-plugin
@@ -27,12 +27,12 @@ build: build-plugin
 # Run all unit tests
 test:
     xcodebuild -project "{{project}}" -scheme "{{scheme}}" -configuration Debug test \
-        -only-testing:"Claude StatusTests" {{xcode_flags}}
+        -only-testing:"ClawdeTests" {{xcode_flags}}
 
 # Run a single test class (e.g., just test-class SessionStateTests)
 test-class class:
     xcodebuild -project "{{project}}" -scheme "{{scheme}}" \
-        -only-testing:"Claude StatusTests/{{class}}" test {{xcode_flags}}
+        -only-testing:"ClawdeTests/{{class}}" test {{xcode_flags}}
 
 # Clean build artifacts
 clean:
@@ -43,7 +43,7 @@ clean:
 swap: build-plugin
     #!/usr/bin/env bash
     set -euo pipefail
-    build_dir="/tmp/claude-status-swap"
+    build_dir="/tmp/clawde-swap"
     xcodebuild -project "{{project}}" -scheme "{{scheme}}" -configuration Debug build \
         -derivedDataPath "$build_dir" \
         -allowProvisioningUpdates \
@@ -64,19 +64,19 @@ show-version:
 
 # Sync the full plugin to the installed plugin cache and update the registry
 sync-plugin: build-plugin
-    rm -rf ~/.claude/plugins/cache/claude-status-marketplace/
-    mkdir -p ~/.claude/plugins/cache/claude-status-marketplace/claude-status/{{version}}/
-    rsync -a clawde-plugin/plugins/claude-status/ \
-        ~/.claude/plugins/cache/claude-status-marketplace/claude-status/{{version}}/
-    codesign -fs - ~/.claude/plugins/cache/claude-status-marketplace/claude-status/{{version}}/scripts/session-status
-    codesign -fs - ~/.claude/plugins/cache/claude-status-marketplace/claude-status/{{version}}/scripts/set-session-name
+    rm -rf ~/.claude/plugins/cache/clawde-marketplace/
+    mkdir -p ~/.claude/plugins/cache/clawde-marketplace/clawde/{{version}}/
+    rsync -a clawde-plugin/plugins/clawde/ \
+        ~/.claude/plugins/cache/clawde-marketplace/clawde/{{version}}/
+    codesign -fs - ~/.claude/plugins/cache/clawde-marketplace/clawde/{{version}}/scripts/session-status
+    codesign -fs - ~/.claude/plugins/cache/clawde-marketplace/clawde/{{version}}/scripts/set-session-name
     python3 -c "\
     import json, pathlib; \
     p = pathlib.Path.home() / '.claude/plugins/installed_plugins.json'; \
     d = json.loads(p.read_text()); \
-    key = 'claude-status@claude-status-marketplace'; \
+    key = 'clawde@clawde-marketplace'; \
     ver = '{{version}}'; \
-    path = str(pathlib.Path.home() / '.claude/plugins/cache/claude-status-marketplace/claude-status' / ver); \
+    path = str(pathlib.Path.home() / '.claude/plugins/cache/clawde-marketplace/clawde' / ver); \
     entry = d.get('plugins', {}).get(key, [{}])[0]; \
     entry['installPath'] = path; \
     entry['version'] = ver; \
