@@ -17,7 +17,7 @@ struct PluginInstaller {
     /// Path to the bundled marketplace inside the app bundle.
     var bundledMarketplacePath: String? {
         Bundle.main.resourceURL?
-            .appendingPathComponent("claude-status-plugin")
+            .appendingPathComponent("clawde-plugin")
             .path
     }
 

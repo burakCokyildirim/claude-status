@@ -307,16 +307,16 @@
 			files = (
 			);
 			inputPaths = (
-				"$(SRCROOT)/claude-status-plugin/.claude-plugin",
-				"$(SRCROOT)/claude-status-plugin/plugins",
+				"$(SRCROOT)/clawde-plugin/.claude-plugin",
+				"$(SRCROOT)/clawde-plugin/plugins",
 			);
 			name = "Bundle Plugin Marketplace";
 			outputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/claude-status-plugin",
+				"$(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/clawde-plugin",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "PLUGIN_DIR=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/claude-status-plugin\"\nmkdir -p \"${PLUGIN_DIR}\"\nrsync -a --delete \"${SRCROOT}/claude-status-plugin/.claude-plugin/\" \"${PLUGIN_DIR}/.claude-plugin/\"\nrsync -a --delete \"${SRCROOT}/claude-status-plugin/plugins/\" \"${PLUGIN_DIR}/plugins/\"\n";
+			shellScript = "PLUGIN_DIR=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/clawde-plugin\"\nmkdir -p \"${PLUGIN_DIR}\"\nrsync -a --delete \"${SRCROOT}/clawde-plugin/.claude-plugin/\" \"${PLUGIN_DIR}/.claude-plugin/\"\nrsync -a --delete \"${SRCROOT}/clawde-plugin/plugins/\" \"${PLUGIN_DIR}/plugins/\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
