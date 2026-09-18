@@ -51,7 +51,7 @@ final class SessionMonitor {
     private static let widgetUpdateInterval: TimeInterval = 30
 
     /// Darwin notification name posted by the hook script.
-    private static let darwinNotificationName = "com.poisonpenllc.Claude-Status.session-changed" as CFString
+    private static let darwinNotificationName = "com.burakcokyildirim.clawde.session-changed" as CFString
 
     init(scanInterval: TimeInterval = 5.0) {
         self.scanInterval = scanInterval
@@ -247,8 +247,8 @@ final class SessionMonitor {
 
         lastWidgetUpdate = Date()
 
-        WidgetCenter.shared.reloadTimelines(ofKind: "Claude_StatusWidget")
-        WidgetCenter.shared.reloadTimelines(ofKind: "Claude_ProductivityWidget")
-        WidgetCenter.shared.reloadTimelines(ofKind: "Claude_ScoreWidget")
+        WidgetCenter.shared.reloadTimelines(ofKind: "ClawdeStatusWidget")
+        WidgetCenter.shared.reloadTimelines(ofKind: "ClawdeProductivityWidget")
+        WidgetCenter.shared.reloadTimelines(ofKind: "ClawdeScoreWidget")
     }
 }

@@ -35,6 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Skip UI setup when running under XCTest to avoid blocking the test runner
         guard !isRunningTests else { return }
 
+        // Before anything reads a setting: what the app kept under its old
+        // identifiers moves into the new ones, once.
+        AppGroupMigration.run()
+
         setupMainMenu()
         setupStatusItem()
         setupPopover()
@@ -596,8 +600,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleDeepLink(_ url: URL) {
-        // Handle claude-status://session/{sessionId} URLs from widget
-        guard url.scheme == "claude-status",
+        // Handle clawde://session/{sessionId} URLs from widget
+        guard url.scheme == "clawde",
               url.host == "session",
               let sessionId = url.pathComponents.dropFirst().first else {
             return

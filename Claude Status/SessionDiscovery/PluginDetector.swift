@@ -3,7 +3,7 @@ import Foundation
 /// Detects whether the Claude Status hook/plugin is installed in a profile.
 ///
 /// Checks two installation paths inside the profile's config dir:
-/// 1. **Plugin** — `claude-status` in `<dir>/plugins/installed_plugins.json`
+/// 1. **Plugin** — `clawde` in `<dir>/plugins/installed_plugins.json`
 /// 2. **User hooks** — `session-status` references in `<dir>/settings.json` hooks
 ///
 /// If either is found, the hook is considered installed.
@@ -58,8 +58,8 @@ struct PluginDetector {
             return nil
         }
 
-        // Find the claude-status plugin entry — value is an array of install records
-        for (key, value) in plugins where key.hasPrefix("claude-status@") {
+        // Find the clawde plugin entry — value is an array of install records
+        for (key, value) in plugins where key.hasPrefix("clawde@") {
             guard let records = value as? [[String: Any]],
                   let latest = records.last,
                   let version = latest["version"] as? String else {
@@ -72,7 +72,7 @@ struct PluginDetector {
 
     // MARK: - Plugin Check
 
-    /// Looks for any plugin key containing "claude-status" in installed_plugins.json,
+    /// Looks for any plugin key containing "clawde" in installed_plugins.json,
     /// and verifies it's enabled in settings.json.
     private func checkInstalledPlugins() -> Bool {
         let url = claudeDir
@@ -84,7 +84,7 @@ struct PluginDetector {
             return false
         }
 
-        let installed = plugins.keys.contains { $0.hasPrefix("claude-status@") }
+        let installed = plugins.keys.contains { $0.hasPrefix("clawde@") }
         guard installed else { return false }
 
         // Also verify it's enabled
@@ -95,7 +95,7 @@ struct PluginDetector {
             return installed // installed but can't check enabled — assume yes
         }
 
-        return enabled.contains { $0.key.hasPrefix("claude-status@") && $0.value }
+        return enabled.contains { $0.key.hasPrefix("clawde@") && $0.value }
     }
 
     // MARK: - Settings Hooks Check

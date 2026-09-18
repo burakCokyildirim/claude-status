@@ -5,14 +5,14 @@ import Foundation
 /// The app bundles a complete plugin marketplace in its Resources directory.
 /// Installation runs two CLI commands:
 /// 1. `claude plugin marketplace add <path>` — registers the bundled marketplace
-/// 2. `claude plugin install claude-status@claude-status-marketplace` — installs the plugin
+/// 2. `claude plugin install clawde@clawde-marketplace` — installs the plugin
 ///
 /// Both commands run with `CLAUDE_CONFIG_DIR` pointing at the target profile,
 /// so each profile gets its own installation.
 struct PluginInstaller {
 
-    static let marketplaceName = "claude-status-marketplace"
-    static let pluginKey = "claude-status@claude-status-marketplace"
+    static let marketplaceName = "clawde-marketplace"
+    static let pluginKey = "clawde@clawde-marketplace"
 
     /// Path to the bundled marketplace inside the app bundle.
     var bundledMarketplacePath: String? {
@@ -25,7 +25,7 @@ struct PluginInstaller {
     var bundledPluginVersion: String? {
         guard let marketplacePath = bundledMarketplacePath else { return nil }
         let pluginJSON = URL(fileURLWithPath: marketplacePath)
-            .appendingPathComponent("plugins/claude-status/.claude-plugin/plugin.json")
+            .appendingPathComponent("plugins/clawde/.claude-plugin/plugin.json")
         guard let data = try? Data(contentsOf: pluginJSON),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let version = json["version"] as? String else {
@@ -114,7 +114,7 @@ struct PluginInstaller {
 
         // 3. Clear the plugin cache directory if it exists
         let cacheDir = configDir
-            .appendingPathComponent("plugins/cache/\(Self.marketplaceName)/claude-status")
+            .appendingPathComponent("plugins/cache/\(Self.marketplaceName)/clawde")
         try? FileManager.default.removeItem(at: cacheDir)
 
         return nil
@@ -144,7 +144,7 @@ struct PluginInstaller {
 
         // Read pipe output asynchronously to prevent deadlock when buffers fill.
         // Use a serial queue to synchronize access to the mutable Data buffers.
-        let pipeQueue = DispatchQueue(label: "com.poisonpenllc.Claude-Status.pipeIO")
+        let pipeQueue = DispatchQueue(label: "com.burakcokyildirim.clawde.pipeIO")
         var stderrData = Data()
         var stdoutData = Data()
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in

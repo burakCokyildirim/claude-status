@@ -15,7 +15,7 @@ struct ClaudeStatusWidgetBundle: WidgetBundle {
 /// The main Claude Status widget displaying Claude Code session information.
 @MainActor
 struct Claude_StatusWidget: Widget {
-    let kind: String = "Claude_StatusWidget"
+    let kind: String = "ClawdeStatusWidget"
 
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: Claude_StatusTimelineProvider()) { entry in

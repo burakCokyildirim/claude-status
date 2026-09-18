@@ -67,7 +67,7 @@ nonisolated struct ProductivityTimelineProvider: TimelineProvider {
 /// Medium widget showing time-in-state breakdown with today and all-time tabs.
 @MainActor
 struct Claude_ProductivityWidget: Widget {
-    let kind: String = "Claude_ProductivityWidget"
+    let kind: String = "ClawdeProductivityWidget"
 
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: ProductivityTimelineProvider()) { entry in
@@ -83,7 +83,7 @@ struct Claude_ProductivityWidget: Widget {
 /// Small widget showing the productivity score as a ring.
 @MainActor
 struct Claude_ScoreWidget: Widget {
-    let kind: String = "Claude_ScoreWidget"
+    let kind: String = "ClawdeScoreWidget"
 
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: ProductivityTimelineProvider()) { entry in

@@ -162,10 +162,10 @@ struct ClaudeSession: Identifiable, Codable, Equatable {
     /// Deep link URL for focusing this session from the widget.
     var deepLinkURL: URL {
         var components = URLComponents()
-        components.scheme = "claude-status"
+        components.scheme = "clawde"
         components.host = "session"
         components.path = "/\(id)"
-        return components.url ?? URL(string: "claude-status://session/unknown")!
+        return components.url ?? URL(string: "clawde://session/unknown")!
     }
 }
 
