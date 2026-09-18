@@ -176,6 +176,21 @@ struct SessionDiscoveryTests {
         #expect(discovery.deadSessions.contains("session-alpha"))
         #expect(discovery.deadSessions.contains("session-beta"))
     }
+
+    /// A turn that ended by asking something waits only while questions count as
+    /// waiting; a prompt that really holds the session waits either way.
+    @MainActor
+    @Test func aQuestionWaitsOnlyWhileQuestionsCountAsWaiting() {
+        let counted = SessionDiscovery.shownState(.waiting, activity: "question", questionsCountAsWaiting: true)
+        let notCounted = SessionDiscovery.shownState(.waiting, activity: "question", questionsCountAsWaiting: false)
+        let prompt = SessionDiscovery.shownState(.waiting, activity: "Bash", questionsCountAsWaiting: false)
+        let working = SessionDiscovery.shownState(.active, activity: "thinking", questionsCountAsWaiting: false)
+
+        #expect(counted.state == .waiting && counted.activity == "question")
+        #expect(notCounted.state == .idle && notCounted.activity.isEmpty)
+        #expect(prompt.state == .waiting && prompt.activity == "Bash")
+        #expect(working.state == .active && working.activity == "thinking")
+    }
 }
 
 struct ClaudeProfileTests {

@@ -25,6 +25,9 @@ struct SessionDiscovery {
     /// Keyed by session ID (UUID string from the .cstatus filename).
     var deadSessions: Set<String> = []
 
+    /// The Claude desktop app's own records, for the sessions it runs.
+    private var desktopSessions = ClaudeDesktopSessionStore()
+
     // MARK: - Discovery
 
     /// Result of a discovery pass: sessions plus their .cstatus file locations.
@@ -36,6 +39,7 @@ struct SessionDiscovery {
     /// Full scan across all given profiles: find all .cstatus files, validate PIDs,
     /// classify sources. Updates `deadSessions` for any that are gone.
     mutating func discoverAll(profiles: [ClaudeProfile]) -> DiscoveryResult {
+        desktopSessions.refresh()
         var sessions: [ClaudeSession] = []
         var cstatusFiles: [String: URL] = [:]
 
@@ -52,12 +56,17 @@ struct SessionDiscovery {
                 cstatusFiles[record.sessionId] = record.fileURL
             }
         }
+        sessions += desktopSessions.stoppedUnread(
+            running: sessions, cstatusFiles: cstatusFiles, projectsDirectories: profiles.map(\.projectsDirectory)
+        )
+        desktopSessions.forget(sessionsOtherThan: Set(sessions.map(\.sessionId)))
         return DiscoveryResult(sessions: sessions, cstatusFiles: cstatusFiles)
     }
 
     /// Fast refresh: re-read only .cstatus files (no directory enumeration needed
     /// if we already have cached paths). Falls back to full scan.
     mutating func refreshFromCache(_ cache: [String: URL], profiles: [ClaudeProfile]) -> DiscoveryResult {
+        desktopSessions.refresh()
         var sessions: [ClaudeSession] = []
         var cstatusFiles: [String: URL] = [:]
 
@@ -76,6 +85,10 @@ struct SessionDiscovery {
             sessions.append(assembleSession(from: record, profileName: profileName(for: url, in: profiles)))
             cstatusFiles[record.sessionId] = record.fileURL
         }
+        sessions += desktopSessions.stoppedUnread(
+            running: sessions, cstatusFiles: cstatusFiles, projectsDirectories: profiles.map(\.projectsDirectory)
+        )
+        desktopSessions.forget(sessionsOtherThan: Set(sessions.map(\.sessionId)))
         return DiscoveryResult(sessions: sessions, cstatusFiles: cstatusFiles)
     }
 
@@ -178,9 +191,31 @@ struct SessionDiscovery {
     // MARK: - Session Assembly
 
     /// Builds a `ClaudeSession` from a validated `CStatusRecord`.
-    private func assembleSession(from record: CStatusRecord, profileName: String?) -> ClaudeSession {
-        let source = classifySource(pid: record.pid, ppid: record.ppid)
+    private mutating func assembleSession(from record: CStatusRecord, profileName: String?) -> ClaudeSession {
+        let transcript = ClaudeDesktopSessionStore.transcript(beside: record.fileURL)
+        let host = classifySource(pid: record.pid, ppid: record.ppid)
+        // With no terminal or IDE to own it, a session bridged by Remote Control is
+        // one the user reaches through the Claude app; anything else stays Terminal.
+        let remoteSessionId = host == nil
+            ? desktopSessions.remoteSessionId(record.sessionId, transcript: transcript)
+            : nil
+        let source = host ?? (remoteSessionId == nil ? .terminal(app: "Terminal") : .claudeDesktop)
+        let shown = Self.shownState(
+            record.state,
+            activity: record.activity,
+            questionsCountAsWaiting: AppGroup.defaults?.object(forKey: Self.questionsCountAsWaitingKey) as? Bool ?? true
+        )
+        let isUnread = desktopSessions.isUnread(
+            source: source,
+            hookState: shown.state,
+            cliSessionId: record.sessionId,
+            transcript: transcript
+        )
         let projectName = (record.cwd as NSString).lastPathComponent
+        // A name the user gave with /name-session first, then the session's own
+        // title; with neither, the list falls back to the project folder.
+        let sessionName = record.sessionName
+            ?? desktopSessions.title(record.sessionId, transcript: transcript)
 
         let iTermSessionId: String?
         let tmuxPaneId: String?
@@ -214,16 +249,37 @@ struct SessionDiscovery {
             pid: record.pid,
             workingDirectory: record.cwd,
             projectName: projectName,
-            state: record.state,
+            state: shown.state,
             lastActivityAt: record.timestamp,
             iTermSessionId: iTermSessionId,
             tmuxPaneId: tmuxPaneId,
             tmuxSocket: tmuxSocket,
             source: source,
-            activity: record.activity,
-            sessionName: record.sessionName,
-            profileName: profileName
+            activity: shown.activity,
+            sessionName: sessionName,
+            profileName: profileName,
+            isUnread: isUnread,
+            remoteSessionId: remoteSessionId
         )
+    }
+
+    /// The App Group key for whether a turn that ended by asking something counts
+    /// as waiting. Unset means it does, as the hook reports it.
+    static let questionsCountAsWaitingKey = "countQuestionsAsWaiting"
+
+    /// The state a session shows. The hook reports a turn whose last paragraph
+    /// asks something as waiting, guessing from the text; when questions do not
+    /// count as waiting, that shows as the finished turn the Claude desktop app
+    /// calls it. A prompt that really holds the session keeps waiting either way.
+    static func shownState(
+        _ hookState: SessionState,
+        activity: String,
+        questionsCountAsWaiting: Bool
+    ) -> (state: SessionState, activity: String) {
+        guard hookState == .waiting, activity == "question", !questionsCountAsWaiting else {
+            return (hookState, activity)
+        }
+        return (.idle, "")
     }
 
     // MARK: - Process Validation
@@ -241,8 +297,9 @@ struct SessionDiscovery {
     // MARK: - Source Classification
 
     /// Determines where a Claude session is running by examining the process tree.
-    /// Starts from ppid (the process that launched Claude) and walks up.
-    private func classifySource(pid: pid_t, ppid: pid_t) -> SessionSource {
+    /// Starts from ppid (the process that launched Claude) and walks up. `nil`
+    /// when nothing identifies a host, as for a process a script started.
+    private func classifySource(pid: pid_t, ppid: pid_t) -> SessionSource? {
         // Check the Claude process's own executable path for IDE-bundled binaries
         if let path = executablePath(for: pid) {
             if path.contains("/Developer/Xcode/CodingAssistant/") {
@@ -251,6 +308,12 @@ struct SessionDiscovery {
             if path.contains(".vscode/extensions/anthropic.claude-code") {
                 return .vscode
             }
+        }
+
+        // The Claude desktop app marks the sessions it runs. Checked on the
+        // process itself: the ppid the hook reports does not lead back to the app.
+        if readEnvironmentVariable(for: pid, name: "CLAUDE_CODE_ENTRYPOINT") == "claude-desktop" {
+            return .claudeDesktop
         }
 
         // Check environment variables on the Claude process
@@ -338,7 +401,7 @@ struct SessionDiscovery {
             return .terminal(app: app)
         }
 
-        return .terminal(app: "Terminal")
+        return nil
     }
 
     /// Identifies the real terminal app when running inside tmux.

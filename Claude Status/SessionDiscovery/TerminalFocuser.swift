@@ -18,6 +18,8 @@ struct SessionFocuser {
         
         case .zed:
             activateApp(bundleId: "dev.zed.Zed")
+        case .claudeDesktop:
+            focusClaudeDesktop(session)
         }
     }
 
@@ -42,6 +44,66 @@ struct SessionFocuser {
             return bundleId.hasPrefix("com.jetbrains.")
         }
         jetbrainsApp?.activate()
+    }
+
+    // MARK: - Claude Desktop
+
+    /// Opens the session itself in the Claude desktop app, or at least brings
+    /// the app forward when the session cannot be matched.
+    private func focusClaudeDesktop(_ session: ClaudeSession) {
+        var store = ClaudeDesktopSessionStore()
+        store.refresh(force: true)
+        if let desktop = store.session(forCLISession: session.sessionId),
+           let url = Self.claudeDesktopURL(forDesktopSession: desktop.sessionId) {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        // Bridged by Remote Control. Should the app refuse the link, it still
+        // comes forward.
+        if let remote = session.remoteSessionId,
+           let url = Self.claudeDesktopURL(forRemoteSession: remote) {
+            NSWorkspace.shared.open(url)
+        }
+        activateApp(bundleId: ClaudeDesktopSessionStore.claudeDesktopBundleId)
+    }
+
+    /// The desktop app's link to a session it shows through Remote Control:
+    /// `claude://claude.ai/code/session_…`. The app also routes the shorter
+    /// `claude://code/session_…`, but holds that form behind a feature switch
+    /// and drops it while the switch is off ("code session deep link gated off"
+    /// in its log); the claude.ai form reaches the same handler without it.
+    /// Anything but a `session_` ID is refused.
+    static func claudeDesktopURL(forRemoteSession remoteSessionId: String) -> URL? {
+        let prefix = "session_"
+        let suffix = remoteSessionId.dropFirst(prefix.count)
+        guard remoteSessionId.hasPrefix(prefix),
+              (1...64).contains(suffix.count),
+              suffix.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }) else {
+            return nil
+        }
+        var components = URLComponents()
+        components.scheme = "claude"
+        components.host = "claude.ai"
+        components.path = "/code/" + remoteSessionId
+        return components.url
+    }
+
+    /// The desktop app's link to an existing Claude Code session. Its handler
+    /// accepts only `local_` IDs, so anything else is refused, not passed along.
+    static func claudeDesktopURL(forDesktopSession desktopSessionId: String) -> URL? {
+        let prefix = "local_"
+        let suffix = desktopSessionId.dropFirst(prefix.count)
+        guard desktopSessionId.hasPrefix(prefix),
+              (1...64).contains(suffix.count),
+              suffix.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }) else {
+            return nil
+        }
+        var components = URLComponents()
+        components.scheme = "claude"
+        components.host = "code"
+        components.path = "/continue"
+        components.queryItems = [URLQueryItem(name: "session", value: desktopSessionId)]
+        return components.url
     }
 
     // MARK: - Terminal

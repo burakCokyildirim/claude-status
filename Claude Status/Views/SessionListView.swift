@@ -8,18 +8,29 @@ struct SessionListView: View {
     var showProfileBadges: Bool = false
     var onSessionTap: ((ClaudeSession) -> Void)?
     var onRefresh: (() -> Void)?
+    /// The pet was shown or hidden from the header, to act on it at once.
+    var onPetToggle: (() -> Void)?
     var onSettings: (() -> Void)?
     var onQuit: (() -> Void)?
 
     @AppStorage("iconStyle", store: AppGroup.defaults)
     private var iconStyle: SessionIconStyle = .emoji
 
+    @AppStorage(PetSettings.Keys.enabled, store: AppGroup.defaults)
+    private var isPetShown = false
+
     @State private var isRefreshing = false
 
     private let menuFont = Font.system(size: 13)
 
+    /// Ordered the way the pet ranks them, so the row it stands for is the one
+    /// at the top of this list rather than buried among the idle sessions.
     private var sortedSessions: [ClaudeSession] {
-        sessions.sortedByStateAndActivity
+        sessions.sorted {
+            $0.attentionRank != $1.attentionRank
+                ? $0.attentionRank < $1.attentionRank
+                : $0.lastActivityAt > $1.lastActivityAt
+        }
     }
 
     /// Max height for session list: 80% of screen height minus chrome.
@@ -65,6 +76,7 @@ struct SessionListView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
             Spacer()
+            petToggle
             Button(action: {
                 withAnimation(.linear(duration: 0.5)) {
                     isRefreshing = true
@@ -93,6 +105,21 @@ struct SessionListView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// Shows or hides the desktop pet, and stays lit while it is out.
+    private var petToggle: some View {
+        Button {
+            isPetShown.toggle()
+            onPetToggle?()
+        } label: {
+            Image(systemName: "pawprint.fill")
+                .font(.system(size: 12))
+        }
+        .buttonStyle(RoundToggleButtonStyle(isOn: isPetShown))
+        .help(isPetShown ? "Hide Desktop Pet" : "Show Desktop Pet")
+        .accessibilityLabel("Desktop Pet")
+        .accessibilityValue(isPetShown ? "On" : "Off")
     }
 
     private var emptyState: some View {
@@ -165,6 +192,30 @@ struct SessionListView: View {
     ) -> some View {
         MenuButtonView(action: action, label: label)
             .font(menuFont)
+    }
+}
+
+/// A round button filled with the accent colour while what it switches is on, as
+/// Control Center draws its toggles.
+///
+/// The circle is drawn outside the icon's own box rather than around a larger
+/// frame, so the button takes the same room as the plain icons beside it and
+/// lines up with them.
+private struct RoundToggleButtonStyle: ButtonStyle {
+    let isOn: Bool
+
+    private static let ring: CGFloat = 5
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(isOn ? Color.white : Color.secondary)
+            .background(
+                Circle()
+                    .fill(isOn ? Color.accentColor : Color.primary.opacity(0.1))
+                    .padding(-Self.ring)
+            )
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .contentShape(Circle().inset(by: -Self.ring))
     }
 }
 

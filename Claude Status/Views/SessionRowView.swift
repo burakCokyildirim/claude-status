@@ -67,7 +67,7 @@ struct SessionRowView: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 1) {
-                Text(session.state.label)
+                Text(stateLabel)
                     .font(.system(size: 11))
                     .foregroundStyle(.primary)
                 Text(session.timeSinceActivity)
@@ -91,7 +91,7 @@ struct SessionRowView: View {
     private var statusIndicator: some View {
         switch iconStyle {
         case .emoji:
-            Text(session.state.emoji)
+            Text(session.isUnread == true ? "\u{1F535}" : session.state.emoji)
                 .font(.system(size: 14))
         case .dots:
             Circle()
@@ -100,12 +100,20 @@ struct SessionRowView: View {
         }
     }
 
+    /// Unread is shown in place of the state it would otherwise report, which
+    /// is idle: the hook calls a finished turn idle whether or not anyone has
+    /// read it, and that is the distinction worth surfacing.
+    private var stateLabel: String {
+        session.isUnread == true ? "Unread" : session.state.label
+    }
+
     private var dotColor: Color {
+        if session.isUnread == true { return SessionPalette.unread }
         switch session.state {
-        case .active: .green
-        case .waiting: .orange
-        case .compacting: .blue
-        case .idle: .gray
+        case .active: return .green
+        case .waiting: return .orange
+        case .compacting: return .blue
+        case .idle: return .gray
         }
     }
 }

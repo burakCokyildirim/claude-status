@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let pluginInstaller = PluginInstaller()
     private var eventMonitor: Any?
     private var settingsWindow: NSWindow?
+    private var petSettings = PetSettings.load()
+    private var petController: PetWindowController?
 
     /// Sparkle updater controller for automatic updates.
     /// Only initialized when a valid EdDSA public key is present in Info.plist.
@@ -38,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupPopover()
         setupURLHandler()
         monitor.start()
+        syncPet()
 
         // Initialize Sparkle only if a valid EdDSA public key is configured
         if let edKey = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String,
@@ -81,9 +84,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         monitor.stop()
+        petController?.tearDown()
+        petController = nil
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
         }
+    }
+
+    // MARK: - Desktop Pet
+
+    /// Re-reads the pet settings and reconfigures when one actually changed.
+    ///
+    /// Mirrors how `iconStyle` is picked up: the settings window writes through
+    /// `@AppStorage`, and this rides the status item's existing tick rather than
+    /// adding an observer.
+    private func reloadPetSettingsIfNeeded() {
+        let latest = PetSettings.load()
+        guard latest != petSettings else { return }
+        petSettings = latest
+        syncPet()
+    }
+
+    /// Creates or destroys the pet panel to match the setting. The panel is torn
+    /// down rather than hidden, so a disabled pet holds no window and no timers.
+    private func syncPet() {
+        guard petSettings.isEnabled else {
+            petController?.tearDown()
+            petController = nil
+            return
+        }
+
+        if let petController {
+            petController.update(settings: petSettings)
+        } else {
+            let controller = PetWindowController(
+                settings: petSettings,
+                onFocus: { [weak self] session in
+                    self?.focuser.focus(session: session)
+                },
+                onShowSessionList: { [weak self] in
+                    self?.togglePopover()
+                },
+                onShowSettings: { [weak self] in
+                    self?.showSettings()
+                },
+                onHide: { [weak self] in
+                    PetSettings.setEnabled(false)
+                    // Take effect now rather than on the next tick.
+                    self?.reloadPetSettingsIfNeeded()
+                }
+            )
+            controller.show()
+            petController = controller
+        }
+        updatePet()
+    }
+
+    /// Points the pet at the current highest-priority session.
+    private func updatePet() {
+        petController?.apply(sessions: monitor.sessions)
     }
 
     // MARK: - Status Item
@@ -103,6 +162,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Defer to avoid layout recursion if the status bar is mid-layout
             DispatchQueue.main.async {
                 self?.updateStatusIcon()
+                // The pet rides this tick rather than starting a timer of its own.
+                self?.reloadPetSettingsIfNeeded()
+                self?.updatePet()
             }
         }
     }
@@ -295,6 +357,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 },
                 onRefresh: { [weak self] in
                     self?.monitor.refresh()
+                },
+                onPetToggle: { [weak self] in
+                    self?.reloadPetSettingsIfNeeded()
                 },
                 onSettings: { [weak self] in
                     self?.closePopover()
@@ -577,6 +642,7 @@ private struct PopoverContentView: View {
     @Bindable var monitor: SessionMonitor
     var onSessionTap: (ClaudeSession) -> Void
     var onRefresh: () -> Void
+    var onPetToggle: () -> Void
     var onSettings: () -> Void
     var onQuit: () -> Void
 
@@ -587,6 +653,7 @@ private struct PopoverContentView: View {
             showProfileBadges: monitor.profileStore.enabledProfiles.count > 1,
             onSessionTap: onSessionTap,
             onRefresh: onRefresh,
+            onPetToggle: onPetToggle,
             onSettings: onSettings,
             onQuit: onQuit
         )

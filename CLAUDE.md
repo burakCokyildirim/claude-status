@@ -65,14 +65,31 @@ Claude Status/                         # Main app target
     SessionMonitor.swift               # @Observable class: Darwin notifications + file watching + 5s polling
     StateResolver.swift                # DispatchSource file watchers (one per profile); JSONL timestamp fallback
     ITermFocuser.swift                 # Focuses host app (AppleScript for iTerm2, process activation for others)
+    ClaudeDesktopSessions.swift        # Claude desktop records: session IDs for deep links, and the unread test
+    ClaudeDesktopFocusLog.swift        # Which session the desktop app has on screen, from the app's own log
     ProductivityTracker.swift          # Time-in-state tracking, concurrency, score (persists to App Group)
     PluginDetector.swift               # Checks installed_plugins.json and settings.json for hook status
     PluginInstaller.swift              # Installs/uninstalls bundled plugin via `claude plugin` CLI
+  Pet/                                 # Optional always-on-top desktop pet (off by default)
+    PetPresenter.swift                 # Pure: [ClaudeSession] -> the one session the pet represents
+    PetSettings.swift                  # Settings value + enums, read from App Group defaults
+    PetPosition.swift                  # Codable position + pure screen resolution/clamp math
+    PetLayout.swift                    # Pure panel/sprite/bubble geometry over the 20x16 canvas
+    PetCharacter.swift                 # Frames composed from parts, a routine per mood, shared props
+    PetPlayback.swift                  # Pure: which frame is up, through entrance, loop, and exit
+    Characters/                        # Claudie, Nibble, Quack, Kernel: parts and the frames they make
+    PetPanel.swift                     # NSPanel: borderless, non-activating, .floating, all Spaces
+    PetContentView.swift               # NSView: hit test, tracking area, click/drag, context menu
+    PetBubbleContentView.swift         # NSView: speech bubble hover and row clicks, in a panel of its own
+    PetWindowController.swift          # Lifecycle, placement, animation driver, teardown
   Views/                               # SwiftUI views
     SessionListView.swift              # Popover: header, session list, empty state, Settings/Quit
     SessionRowView.swift               # Session row: status icon, project, source, activity, time
-    SettingsView.swift                 # Icon style picker, launch at login, plugin management
+    SessionPalette.swift               # Colours shared by the session list and the pet
+    SettingsView.swift                 # Icon style, launch at login, plugin management, desktop pet
     ProductivityBarView.swift          # Visual productivity tracking bar
+    PetView.swift                      # SwiftUI Canvas: sprite render, count badge
+    PetBubbleView.swift                # Pet speech bubble: busy and recent idle sessions, as session list rows
 
 Shared/                                # Models shared between app and widget
   ClaudeSession.swift                  # ClaudeSession model, SessionState enum, SessionSource enum
@@ -119,6 +136,8 @@ The app supports multiple Claude Code profiles (config dirs selected via `CLAUDE
    - **File system watching** (fast) — `DispatchSource` on each enabled profile's `projects/` dir
    - **Polling timer** (5s fallback) — catches sessions without hooks (IDE agents)
 
+A session is listed under the first name it has: one set with `/name-session` (the `.cstatus` `session_name`), the title the Claude desktop app lists it under, the title Claude Code wrote into its transcript (`custom-title`, then `ai-title`, read from the end and at most every 30 seconds), and otherwise its project folder. The name lands in `ClaudeSession.sessionName`, so the session list, the widget, and the pet all show it without knowing where it came from.
+
 ### Session State
 
 State is reported by the hook script in `.cstatus` files:
@@ -130,11 +149,23 @@ State is reported by the hook script in `.cstatus` files:
 | Compacting | broom | blue | Context compaction in progress |
 | Idle | sleep | gray | No recent activity |
 
+The hook also reports waiting, with activity `question`, when a turn ends with a question in its last paragraph, a guess from the text. The **Questions Count as Waiting** setting (App Group key `countQuestionsAsWaiting`, on unless turned off) can show such a turn as the finished turn the Claude desktop app calls it; a prompt that really holds the session keeps waiting.
+
+Sessions run by the Claude desktop app carry one signal the hook cannot give: **unread** — Claude has spoken since the user last had that session in front of them. It is a flag on `ClaudeSession`, not a `SessionState`, so it never makes the stronger claim `waiting` does (that the session is blocked until the user answers); the pet and the session list draw it in the same blue the desktop app uses for it. `ClaudeDesktopSessions.swift` decides it by comparing the time of Claude's last answer in the session's transcript against the last time the session was seen. The hook's `.cstatus` timestamp cannot stand in for that answer: the desktop app starts a session's process whenever the session is clicked, and every start rewrites the file. `ClaudeDesktopFocusLog.swift` supplies the hard part — which session the app currently has on screen — by reading the app's own `~/Library/Logs/Claude/main.log`, the only signal available without Screen Recording that tells reading a session apart from having the app up on a plain chat. The app also stops sessions' processes — evicting idle ones once it has too many open or after half an hour, and all of them when it quits — and the hook's file goes with each, so a session seen running with an unread answer stays listed, as last seen, until it is read or archived. Marks live in the App Group under `claudeDesktopSeenAt`, and those sessions under `claudeDesktopUnreadSessions`.
+
 ### Host App Recognition
 
 **Terminals** (via process tree): iTerm2 (session-specific AppleScript focusing), Terminal, Warp, Alacritty, Kitty, WezTerm, Ghostty
 
 **IDEs** (via process tree): Xcode, VS Code, JetBrains IDEs, Zed
+
+**Claude desktop app** (via `CLAUDE_CODE_ENTRYPOINT=claude-desktop` on the Claude process): opens the exact session with `claude://code/continue`, matched through the app's `claude-code-sessions` records
+
+**Remote Control** (a process no terminal or IDE owns, as when a script starts `claude --remote-control`, whose transcript records a `bridge-session`): shown as Claude too, since that is where the user reaches it. A click sends `claude://claude.ai/code/session_…`, which opens the session, and brings the app forward; the shorter `claude://code/session_…` waits on a feature switch in the app and is dropped while it is off. Without a bridge, such a process still falls back to Terminal
+
+### Desktop Pet
+
+An optional floating character, off by default. `PetWindowController` owns a borderless, non-activating `NSPanel` at `.floating` that joins all Spaces; SwiftUI draws into it and it lets every click through, while `PetContentView` owns every event from a sprite-sized child panel on top, so only the sprite is clickable and everything around it clicks through. `PetPresenter` picks the single session it stands for, reusing `SessionState.sortOrder`, and the sessions its speech bubble lists: every one doing something or holding an answer, in the same order, then the idle sessions that did something last — one after busy ones, up to three when nothing is busy. Each line reads as the session list's row does. The bubble is a third child panel that takes the mouse; while the pointer is on one of its lines the pet acts out that session, and a click focuses it. It hangs by a tail from the count badge at the character's top left, which takes the colour of the mood on screen: the bubble grows out of the badge and draws back into it, and the badge draws in to a dot while the list is open. Characters are frame animations on a 20x16 canvas: each file under `Characters/` draws a character's parts once and places them to make its frames, and every mood — the four states, unread, and resting with no session — has a routine of an optional entrance, a loop, and an optional exit. `PetPlayback` sequences those as a pure value, and the controller's timer wakes only when the frame on screen is due to change. A hop — twice, the one motion not drawn into the frames — plays over the top whenever a session takes up something new, and when the pet or one of the bubble's lines is clicked. Settings live in the App Group defaults under `pet*` keys (the popover's header has a button that shows or hides the pet) and are re-read on the status item's existing one-second tick — the pet polls nothing of its own, runs no frame timer while hidden or covered, and under reduced motion holds each mood on a single still frame.
 
 ### Productivity Tracking
 
