@@ -2,19 +2,20 @@
 
 ## Project Overview
 
-Claude Status is a native macOS menu bar app that monitors active Claude Code sessions on the local machine. It shows session state, project info, and provides one-click focus to the session's host app (terminals and IDEs). Distributed outside the Mac App Store via Developer ID signing, notarization, and Sparkle auto-updates.
+Clawde is a native macOS app for watching Claude Code sessions. A pixel-art pet sits above your windows and acts out what the session it stands for is doing; a menu bar item lists every session, with one-click focus into the host app (terminals, IDEs, the Claude desktop app). It began as a fork of [gmr/claude-status](https://github.com/gmr/claude-status) and is now its own project. Distributed outside the Mac App Store via Developer ID signing, notarization, and Sparkle auto-updates (feed and keys not set up yet — see *Identity*).
 
 ## Build & Test
 
 Xcode project with SPM dependencies (no standalone Package.swift). Use `just` for all build and test commands:
 
 ```bash
-just build          # Build debug configuration (includes plugin binaries)
+just build-plugin   # cargo build the two hook binaries into the plugin's scripts dir
+just build          # Build debug configuration (runs build-plugin first)
 just test           # Run all unit tests
-just test-class SessionStateTests  # Run a single test class
+just test-class PetLayoutTests     # Run a single test class
 just clean          # Clean build artifacts
 just swap           # Build, copy to /Applications, and relaunch
-just sync-plugin    # Sync plugin to installed plugin cache
+just sync-plugin    # Sync the plugin into the installed plugin cache
 just show-version   # Show calculated version from git tags
 ```
 
@@ -27,18 +28,36 @@ The justfile handles `MACOSX_DEPLOYMENT_TARGET=15.0` override (needed for Xcode 
 - **SwiftUI + AppKit** hybrid: AppKit for `NSStatusItem`/`NSPopover`/`NSWindow`, SwiftUI for all views
 - **Menu bar-only**: `LSUIElement = YES` (no Dock icon)
 - **No App Sandbox**: required for `proc_pidinfo`, `sysctl KERN_PROCARGS2`, and AppleScript automation
-- Bundle ID: `com.poisonpenllc.Claude-Status`
-- Widget Bundle ID: `com.poisonpenllc.Claude-Status.widget`
-- App Group: `group.com.poisonpenllc.Claude-Status` (shared data between app and widget)
-- URL Scheme: `claude-status://`
+- Bundle ID: `com.burakcokyildirim.clawde`
+- Widget Bundle ID: `com.burakcokyildirim.clawde.widget`
+- App Group: `group.com.burakcokyildirim.clawde` (shared data between app and widget)
+- URL Scheme: `clawde://`
+
+### Identity — what not to "finish" renaming
+
+The project was renamed from Claude Status, and the rename is complete. These
+identifiers are contracts, not leftovers, and each has a counterpart that must
+change with it:
+
+| Identifier | Value | Its other half |
+|---|---|---|
+| Darwin notification | `com.burakcokyildirim.clawde.session-changed` | posted by `clawde-plugin`'s two binaries |
+| Marketplace / plugin key | `clawde-marketplace` / `clawde@clawde-marketplace` | `marketplace.json` and `plugin.json` in the submodule |
+| App Group | `group.com.burakcokyildirim.clawde` | every setting and file already on a user's disk |
+| Widget kinds | `ClawdeStatusWidget`, `ClawdeProductivityWidget`, `ClawdeScoreWidget` | widgets a user has already placed |
+| URL scheme | `clawde://` | the widget's deep links |
+| `.cstatus` file and its JSON keys | unchanged | the plugin writes them |
+
+`AppGroupMigration` carries the old group's contents across on first launch and
+is the only place the previous identifiers may appear.
 
 ## Dependencies (SPM)
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| Sparkle | 2.9.0 | Auto-updates via Appcast (EdDSA-signed) |
-| CocoaLumberjack | 3.9.0 | Structured logging |
-| swift-log | 1.10.1 | Swift logging API |
+| Sparkle | 2.7.0+ | Auto-updates via Appcast (EdDSA-signed) |
+
+Sparkle is the only package. The hook plugin is a git submodule (`clawde-plugin/`, Rust), not an SPM dependency.
 
 ## Architecture
 
@@ -46,25 +65,25 @@ The justfile handles `MACOSX_DEPLOYMENT_TARGET=15.0` override (needed for Xcode 
 
 | Target | Bundle ID | Purpose |
 |--------|-----------|---------|
-| `Claude Status` | `com.poisonpenllc.Claude-Status` | Main app: `NSStatusItem` + `NSPopover` with SwiftUI views |
-| `Claude StatusTests` | `com.poisonpenllc.Claude-StatusTests` | Unit tests (Swift Testing framework) |
-| `Claude StatusWidgetExtension` | `com.poisonpenllc.Claude-Status.widget` | WidgetKit desktop widgets (status, productivity, score) |
+| `Clawde` | `com.burakcokyildirim.clawde` | Main app: `NSStatusItem` + `NSPopover` with SwiftUI views, and the pet's panels |
+| `ClawdeTests` | `com.burakcokyildirim.clawde.tests` | Unit tests (Swift Testing framework) |
+| `ClawdeWidgetExtension` | `com.burakcokyildirim.clawde.widget` | WidgetKit desktop widgets (status, productivity, score) |
 
 ### Source Layout
 
 ```
-Claude Status/                         # Main app target
+Clawde/                                # Main app target
   AppMain.swift                        # Entry point, menu bar-only setup
   AppDelegate.swift                    # NSStatusItem, NSPopover, settings window, Sparkle updater
-  Claude_StatusWidgetConfiguration.swift  # WidgetKit configuration
+  ClawdeWidgetConfiguration.swift      # WidgetKit configuration
   Info.plist                           # Sparkle feed URL, URL scheme
-  Claude Status.entitlements           # App Groups (no sandbox)
+  Clawde.entitlements                  # App Groups (no sandbox)
   SessionDiscovery/                    # Core session monitoring
     ClaudeProfile.swift                # ClaudeProfile model + ProfileStore (multi-profile config dirs)
     SessionDiscovery.swift             # Scans each profile's projects/*/*.cstatus, validates PIDs, classifies source
     SessionMonitor.swift               # @Observable class: Darwin notifications + file watching + 5s polling
     StateResolver.swift                # DispatchSource file watchers (one per profile); JSONL timestamp fallback
-    ITermFocuser.swift                 # Focuses host app (AppleScript for iTerm2, process activation for others)
+    TerminalFocuser.swift              # Focuses host app (AppleScript for iTerm2, deep links for the Claude app)
     ClaudeDesktopSessions.swift        # Claude desktop records: session IDs for deep links, and the unread test
     ClaudeDesktopFocusLog.swift        # Which session the desktop app has on screen, from the app's own log
     ProductivityTracker.swift          # Time-in-state tracking, concurrency, score (persists to App Group)
@@ -94,32 +113,32 @@ Claude Status/                         # Main app target
 Shared/                                # Models shared between app and widget
   ClaudeSession.swift                  # ClaudeSession model, SessionState enum, SessionSource enum
   ProductivityStats.swift              # ProductivityStats and ProductivityData models
+  AppGroup.swift                       # The App Group id, its defaults suite and container
+  AppGroupMigration.swift              # One-time carry-over from the identifiers used before the rename
 
-Claude StatusWidget/                   # Widget extension target
-  Claude_StatusWidget.swift            # Widget bundle (3 widgets)
-  Claude_StatusTimelineProvider.swift   # WidgetKit timeline provider
-  Claude_StatusWidgetEntryView.swift   # Session status widget view
+ClawdeWidget/                          # Widget extension target
+  ClawdeWidgetBundle.swift             # Widget bundle (3 widgets) and the session widget
+  ClawdeTimelineProvider.swift         # WidgetKit timeline provider
+  ClawdeWidgetEntryView.swift          # Session status widget view
   ProductivityWidget.swift             # Productivity widget definition
   ProductivityWidgetView.swift         # Productivity widget view
   ScoreWidgetView.swift                # Score visualization widget view
   Info.plist                           # Extension metadata
-  Claude StatusWidgetExtension.entitlements  # App Sandbox + App Groups
 
-Claude StatusTests/                    # Unit tests
-  Claude_StatusTests.swift
+ClawdeWidgetExtension.entitlements     # App Sandbox + App Groups (widget)
 
-claude-plugin/                         # Bundled Claude Code plugin
-  plugins/claude-status/
-    hooks/hooks.json                   # 14 hook events (SessionStart, Stop, PreToolUse, etc.)
-    scripts/
-      session-status.py                # Writes .cstatus JSON, posts Darwin notification
-      set-session-name.py              # Sets custom session name in .cstatus
+ClawdeTests/                           # Unit tests (Swift Testing)
+
+clawde-plugin/                         # The hook plugin, a submodule of burakCokyildirim/clawde-plugin (Rust)
+  plugins/clawde/
+    hooks/hooks.json                   # 5 hook events (SessionStart, PermissionRequest, Notification, PreCompact, SessionEnd)
+    scripts/                           # session-status and set-session-name, built by `just build-plugin`
     skills/session-name/SKILL.md       # /name-session slash command
-    .claude-plugin/plugin.json         # Plugin metadata
+    .claude-plugin/plugin.json         # Plugin metadata (version the app compares against)
   .claude-plugin/marketplace.json      # Marketplace definition
-  tests/test_session_status.py         # Python unittest suite for hook script
+  crates/                              # The Rust sources for both binaries
 
-assets/                                # Marketing assets (screenshot, icons)
+assets/                                # Marketing assets (screenshots, icons)
 ```
 
 ### Profiles
@@ -132,7 +151,7 @@ The app supports multiple Claude Code profiles (config dirs selected via `CLAUDE
 2. **SessionDiscovery** scans each enabled profile's `projects/*/` for `.cstatus` files, parses JSON (session ID, PID, state, activity, cwd), validates PIDs with `kill(pid, 0)`
 3. **Source classification** walks the process tree via `proc_pidinfo`/`proc_pidpath` and reads environment variables via `sysctl KERN_PROCARGS2` to identify the host app
 4. **SessionMonitor** (`@Observable`) maintains the session list with three update mechanisms:
-   - **Darwin notifications** (instant) — hook posts `com.poisonpenllc.Claude-Status.session-changed` via `notifyutil -p`
+   - **Darwin notifications** (instant) — hook posts `com.burakcokyildirim.clawde.session-changed` via `notifyutil -p`
    - **File system watching** (fast) — `DispatchSource` on each enabled profile's `projects/` dir
    - **Polling timer** (5s fallback) — catches sessions without hooks (IDE agents)
 
@@ -181,17 +200,18 @@ An optional floating character, off by default. `PetWindowController` owns a bor
 | `~/.claude/projects/<path>/sessions-index.json` | Session index with metadata, prompts, timestamps |
 | `~/.claude/projects/<path>/<uuid>.jsonl` | Conversation logs per session |
 | `~/.claude/plugins/installed_plugins.json` | Plugin registry |
-| `~/Library/Group Containers/group.com.poisonpenllc.Claude-Status/productivity.json` | Shared productivity data |
+| `~/Library/Group Containers/group.com.burakcokyildirim.clawde/productivity.json` | Shared productivity data |
 
 ## CI/CD
 
 ### CI Build (`xcode.yml`)
 
-Runs on push/PR to `main`. Two parallel jobs:
+Runs on push/PR to `main`. Three jobs, the first feeding the other two:
+- **Build Plugin**: `cargo build --release` in `clawde-plugin/`, ad-hoc signs the two binaries, uploads them as an artifact
 - **Build**: `xcodebuild clean build` with code signing disabled
-- **Test**: `xcodebuild test` for `Claude StatusTests` only
+- **Test**: `xcodebuild test` for `ClawdeTests` only
 
-Both override `MACOSX_DEPLOYMENT_TARGET=15.0`.
+All three check out submodules; Build and Test download the plugin artifact first. Every job overrides `MACOSX_DEPLOYMENT_TARGET=15.0`.
 
 ### Release (`release.yml`)
 
