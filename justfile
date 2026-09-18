@@ -13,12 +13,12 @@ version := `tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0"); c
 
 # Build the Rust plugin binaries and copy to the plugin scripts directory
 build-plugin:
-    cd claude-status-plugin && cargo build --release
-    mkdir -p claude-status-plugin/plugins/claude-status/scripts
-    cp claude-status-plugin/target/release/session-status claude-status-plugin/plugins/claude-status/scripts/
-    cp claude-status-plugin/target/release/set-session-name claude-status-plugin/plugins/claude-status/scripts/
-    codesign -fs - claude-status-plugin/plugins/claude-status/scripts/session-status
-    codesign -fs - claude-status-plugin/plugins/claude-status/scripts/set-session-name
+    cd clawde-plugin && cargo build --release
+    mkdir -p clawde-plugin/plugins/claude-status/scripts
+    cp clawde-plugin/target/release/session-status clawde-plugin/plugins/claude-status/scripts/
+    cp clawde-plugin/target/release/set-session-name clawde-plugin/plugins/claude-status/scripts/
+    codesign -fs - clawde-plugin/plugins/claude-status/scripts/session-status
+    codesign -fs - clawde-plugin/plugins/claude-status/scripts/set-session-name
 
 # Build debug configuration (unsigned, for CI and fast iteration)
 build: build-plugin
@@ -66,7 +66,7 @@ show-version:
 sync-plugin: build-plugin
     rm -rf ~/.claude/plugins/cache/claude-status-marketplace/
     mkdir -p ~/.claude/plugins/cache/claude-status-marketplace/claude-status/{{version}}/
-    rsync -a claude-status-plugin/plugins/claude-status/ \
+    rsync -a clawde-plugin/plugins/claude-status/ \
         ~/.claude/plugins/cache/claude-status-marketplace/claude-status/{{version}}/
     codesign -fs - ~/.claude/plugins/cache/claude-status-marketplace/claude-status/{{version}}/scripts/session-status
     codesign -fs - ~/.claude/plugins/cache/claude-status-marketplace/claude-status/{{version}}/scripts/set-session-name

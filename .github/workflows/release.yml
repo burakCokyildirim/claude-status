@@ -33,14 +33,14 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            claude-status-plugin/target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('claude-status-plugin/Cargo.lock') }}
+            clawde-plugin/target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('clawde-plugin/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-release-
 
       - name: Build universal plugin binaries
         run: |
-          cd claude-status-plugin
+          cd clawde-plugin
           cargo build --release --target aarch64-apple-darwin
           cargo build --release --target x86_64-apple-darwin
           mkdir -p plugins/claude-status/scripts
@@ -90,10 +90,10 @@ jobs:
         run: |
           codesign --force --sign "$CODE_SIGN_IDENTITY" \
             --options runtime \
-            claude-status-plugin/plugins/claude-status/scripts/session-status
+            clawde-plugin/plugins/claude-status/scripts/session-status
           codesign --force --sign "$CODE_SIGN_IDENTITY" \
             --options runtime \
-            claude-status-plugin/plugins/claude-status/scripts/set-session-name
+            clawde-plugin/plugins/claude-status/scripts/set-session-name
 
       - name: Resolve Sparkle packages
         run: |
