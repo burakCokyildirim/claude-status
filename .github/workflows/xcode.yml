@@ -35,15 +35,15 @@ jobs:
         run: |
           cd clawde-plugin
           cargo build --release
-          mkdir -p plugins/claude-status/scripts
-          cp target/release/session-status plugins/claude-status/scripts/
-          cp target/release/set-session-name plugins/claude-status/scripts/
-          codesign -fs - plugins/claude-status/scripts/session-status
-          codesign -fs - plugins/claude-status/scripts/set-session-name
+          mkdir -p plugins/clawde/scripts
+          cp target/release/session-status plugins/clawde/scripts/
+          cp target/release/set-session-name plugins/clawde/scripts/
+          codesign -fs - plugins/clawde/scripts/session-status
+          codesign -fs - plugins/clawde/scripts/set-session-name
 
       - name: Archive plugin binaries
         run: |
-          tar -C clawde-plugin/plugins/claude-status -czf plugin-binaries.tgz scripts
+          tar -C clawde-plugin/plugins/clawde -czf plugin-binaries.tgz scripts
 
       - name: Upload plugin binaries
         uses: actions/upload-artifact@v7
@@ -71,14 +71,14 @@ jobs:
 
       - name: Extract plugin binaries
         run: |
-          mkdir -p clawde-plugin/plugins/claude-status
-          tar -xzf plugin-binaries.tgz -C clawde-plugin/plugins/claude-status
+          mkdir -p clawde-plugin/plugins/clawde
+          tar -xzf plugin-binaries.tgz -C clawde-plugin/plugins/clawde
 
       - name: Build
         run: |
           xcodebuild clean build \
-            -project "Claude Status.xcodeproj" \
-            -scheme "Claude Status" \
+            -project "Clawde.xcodeproj" \
+            -scheme "Clawde" \
             -destination "platform=macOS" \
             MACOSX_DEPLOYMENT_TARGET=15.0 \
             CODE_SIGN_IDENTITY=- \
@@ -103,16 +103,16 @@ jobs:
 
       - name: Extract plugin binaries
         run: |
-          mkdir -p clawde-plugin/plugins/claude-status
-          tar -xzf plugin-binaries.tgz -C clawde-plugin/plugins/claude-status
+          mkdir -p clawde-plugin/plugins/clawde
+          tar -xzf plugin-binaries.tgz -C clawde-plugin/plugins/clawde
 
       - name: Test
         run: |
           xcodebuild test \
-            -project "Claude Status.xcodeproj" \
-            -scheme "Claude Status" \
+            -project "Clawde.xcodeproj" \
+            -scheme "Clawde" \
             -destination "platform=macOS" \
-            -only-testing:"Claude StatusTests" \
+            -only-testing:"ClawdeTests" \
             MACOSX_DEPLOYMENT_TARGET=15.0 \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_ALLOWED=NO

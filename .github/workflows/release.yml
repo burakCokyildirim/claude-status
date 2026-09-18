@@ -43,15 +43,15 @@ jobs:
           cd clawde-plugin
           cargo build --release --target aarch64-apple-darwin
           cargo build --release --target x86_64-apple-darwin
-          mkdir -p plugins/claude-status/scripts
+          mkdir -p plugins/clawde/scripts
           lipo -create \
             target/aarch64-apple-darwin/release/session-status \
             target/x86_64-apple-darwin/release/session-status \
-            -output plugins/claude-status/scripts/session-status
+            -output plugins/clawde/scripts/session-status
           lipo -create \
             target/aarch64-apple-darwin/release/set-session-name \
             target/x86_64-apple-darwin/release/set-session-name \
-            -output plugins/claude-status/scripts/set-session-name
+            -output plugins/clawde/scripts/set-session-name
 
       - name: Import signing certificate
         env:
@@ -90,16 +90,16 @@ jobs:
         run: |
           codesign --force --sign "$CODE_SIGN_IDENTITY" \
             --options runtime \
-            clawde-plugin/plugins/claude-status/scripts/session-status
+            clawde-plugin/plugins/clawde/scripts/session-status
           codesign --force --sign "$CODE_SIGN_IDENTITY" \
             --options runtime \
-            clawde-plugin/plugins/claude-status/scripts/set-session-name
+            clawde-plugin/plugins/clawde/scripts/set-session-name
 
       - name: Resolve Sparkle packages
         run: |
           xcodebuild -resolvePackageDependencies \
-            -project "Claude Status.xcodeproj" \
-            -scheme "Claude Status"
+            -project "Clawde.xcodeproj" \
+            -scheme "Clawde"
 
       - name: Extract provisioning profile names
         id: profiles
@@ -117,19 +117,19 @@ jobs:
           WIDGET_PROFILE_NAME: ${{ steps.profiles.outputs.widget_name }}
         run: |
           ruby -e '
-            pbxproj = File.read("Claude Status.xcodeproj/project.pbxproj")
+            pbxproj = File.read("Clawde.xcodeproj/project.pbxproj")
             app_profile = ENV["APP_PROFILE_NAME"]
             widget_profile = ENV["WIDGET_PROFILE_NAME"]
             # Insert PROVISIONING_PROFILE_SPECIFIER after each PRODUCT_BUNDLE_IDENTIFIER line
             pbxproj.gsub!(
-              /^(\s*PRODUCT_BUNDLE_IDENTIFIER = "com\.poisonpenllc\.Claude-Status";)$/,
+              /^(\s*PRODUCT_BUNDLE_IDENTIFIER = "com\.burakcokyildirim\.clawde";)$/,
               "\\1\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"#{app_profile}\";"
             )
             pbxproj.gsub!(
-              /^(\s*PRODUCT_BUNDLE_IDENTIFIER = "com\.poisonpenllc\.Claude-Status\.widget";)$/,
+              /^(\s*PRODUCT_BUNDLE_IDENTIFIER = "com\.burakcokyildirim\.clawde\.widget";)$/,
               "\\1\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"#{widget_profile}\";"
             )
-            File.write("Claude Status.xcodeproj/project.pbxproj", pbxproj)
+            File.write("Clawde.xcodeproj/project.pbxproj", pbxproj)
           '
 
       - name: Derive version from tag
@@ -142,10 +142,10 @@ jobs:
       - name: Build archive
         run: |
           xcodebuild clean archive \
-            -project "Claude Status.xcodeproj" \
-            -scheme "Claude Status" \
+            -project "Clawde.xcodeproj" \
+            -scheme "Clawde" \
             -configuration Release \
-            -archivePath DerivedData/Claude-Status.xcarchive \
+            -archivePath DerivedData/Clawde.xcarchive \
             -destination "platform=macOS" \
             -skipPackageSignatureValidation \
             CODE_SIGN_IDENTITY="${{ secrets.CODE_SIGN_IDENTITY }}" \
@@ -169,13 +169,13 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" ExportOptions.plist
           /usr/libexec/PlistBuddy -c "Add :signingCertificate string Developer ID Application" ExportOptions.plist
           /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" ExportOptions.plist
-          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:com.poisonpenllc.Claude-Status string $APP_PROFILE" ExportOptions.plist
-          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:com.poisonpenllc.Claude-Status.widget string $WIDGET_PROFILE" ExportOptions.plist
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:com.burakcokyildirim.clawde string $APP_PROFILE" ExportOptions.plist
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:com.burakcokyildirim.clawde.widget string $WIDGET_PROFILE" ExportOptions.plist
 
       - name: Export archive
         run: |
           xcodebuild -exportArchive \
-            -archivePath DerivedData/Claude-Status.xcarchive \
+            -archivePath DerivedData/Clawde.xcarchive \
             -exportPath DerivedData/Export \
             -exportOptionsPlist ExportOptions.plist
 
@@ -185,7 +185,7 @@ jobs:
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.DEVELOPMENT_TEAM }}
         run: |
-          APP_PATH="DerivedData/Export/Claude Status.app"
+          APP_PATH="DerivedData/Export/Clawde.app"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" notarize.zip
           SUBMIT_OUT=$(xcrun notarytool submit notarize.zip \
             --apple-id "$APPLE_ID" \
@@ -211,20 +211,20 @@ jobs:
       - name: Package app
         id: package
         run: |
-          APP_PATH="DerivedData/Export/Claude Status.app"
-          ZIP_NAME="Claude-Status-${{ steps.version.outputs.version }}.zip"
+          APP_PATH="DerivedData/Export/Clawde.app"
+          ZIP_NAME="Clawde-${{ steps.version.outputs.version }}.zip"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_NAME"
           echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Build installer pkg
         id: pkg
         run: |
-          APP_PATH="DerivedData/Export/Claude Status.app"
-          PKG_NAME="Claude-Status-${{ steps.version.outputs.version }}.pkg"
+          APP_PATH="DerivedData/Export/Clawde.app"
+          PKG_NAME="Clawde-${{ steps.version.outputs.version }}.pkg"
           pkgbuild \
             --component "$APP_PATH" \
             --install-location "/Applications" \
-            --identifier "com.poisonpenllc.Claude-Status" \
+            --identifier "com.burakcokyildirim.clawde" \
             --version "${{ steps.version.outputs.version }}" \
             --sign "${{ secrets.INSTALLER_SIGN_IDENTITY }}" \
             "$PKG_NAME"
@@ -297,7 +297,7 @@ jobs:
 
           echo "$SPARKLE_PRIVATE_KEY" | ./sparkle/bin/generate_appcast \
             --ed-key-file - \
-            --download-url-prefix "https://github.com/gmr/claude-status/releases/download/${TAG}/" \
+            --download-url-prefix "https://github.com/burakCokyildirim/clawde/releases/download/${TAG}/" \
             releases/
 
           # Move generated appcast to root for GitHub Pages
