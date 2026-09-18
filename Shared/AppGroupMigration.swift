@@ -61,24 +61,39 @@ nonisolated enum AppGroupMigration {
         defaults.set(true, forKey: flagKey)
 
         for identifier in legacyIdentifiers {
-            let old = groupContainers.appendingPathComponent(identifier, isDirectory: true)
-            guard FileManager.default.fileExists(atPath: old.path) else { continue }
-            carryDefaults(from: identifier, into: defaults)
-            carryFiles(from: old, into: container)
-            return
+            // macOS keeps a group's container to the apps entitled to it, which is
+            // why the old identifiers are still in the entitlements: asking for the
+            // container is what makes it readable. Both places are tried, because a
+            // test points the search somewhere else entirely.
+            let places = [
+                FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: identifier),
+                groupContainers.appendingPathComponent(identifier, isDirectory: true),
+            ].compactMap { $0 }
+            let carriedDefaults = carryDefaults(from: identifier, into: defaults)
+            let carriedFiles = places.contains { carryFiles(from: $0, into: container) }
+            if carriedDefaults || carriedFiles {
+                return
+            }
         }
     }
 
-    private static func carryDefaults(from identifier: String, into defaults: UserDefaults) {
-        guard let old = UserDefaults(suiteName: identifier) else { return }
+    /// Copies every key the old group holds that the new one does not.
+    @discardableResult
+    private static func carryDefaults(from identifier: String, into defaults: UserDefaults) -> Bool {
+        guard let old = UserDefaults(suiteName: identifier) else { return false }
+        var carried = false
         for key in keys where defaults.object(forKey: key) == nil {
             guard let value = old.object(forKey: key) else { continue }
             defaults.set(value, forKey: key)
+            carried = true
         }
+        return carried
     }
 
-    private static func carryFiles(from old: URL, into container: URL?) {
-        guard let container else { return }
+    @discardableResult
+    private static func carryFiles(from old: URL, into container: URL?) -> Bool {
+        guard let container else { return false }
+        var carried = false
         for file in files {
             let source = old.appendingPathComponent(file)
             let destination = container.appendingPathComponent(file)
@@ -87,6 +102,8 @@ nonisolated enum AppGroupMigration {
                 continue
             }
             try? FileManager.default.copyItem(at: source, to: destination)
+            carried = true
         }
+        return carried
     }
 }
